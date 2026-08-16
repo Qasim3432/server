@@ -1,10 +1,10 @@
-#server
+*server*
 working on this server 
 ## Things remaining to work:
 
 V--1
-production ready authentication
-profile session management
+1.production ready authentication
+2.profile session management
 anti-bot system
 transiction id
 A Computer player
