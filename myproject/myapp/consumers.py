@@ -16,6 +16,20 @@ ACTIVE_GAMES = {}
 
 
 # ==========================================================
+# TEST MODE
+# ==========================================================
+#
+# IMPORTANT:
+# Keep this True only while developing/testing.
+#
+# Set to False before releasing the production APK.
+#
+# ==========================================================
+
+TEST_MODE = True
+
+
+# ==========================================================
 # LUDO BOARD CONFIGURATION
 # ==========================================================
 
@@ -25,6 +39,7 @@ START_OFFSETS = {
     "GREEN": 26,
     "YELLOW": 39,
 }
+
 
 SAFE_GLOBAL_CELLS = {
     0,
@@ -38,10 +53,17 @@ SAFE_GLOBAL_CELLS = {
 }
 
 
+# ==========================================================
+# GLOBAL CELL CONVERSION
+# ==========================================================
+
 def get_global_cell_index(color, position):
     """
-    Converts a player's local Ludo position to the
-    global 52-cell board position.
+    Convert local player position to global 52-cell board.
+
+    -1  = base
+    0-50 = normal board
+    51+ = home lane / finish
     """
 
     if position == -1 or position >= 51:
@@ -73,9 +95,9 @@ class LudoGameConsumer(AsyncWebsocketConsumer):
         )
 
         # --------------------------------------------------
-        # Read player token from:
+        # Read player_token from query string
         #
-        # ws://.../ws/ludo/1/?player_token=PLAYER_A
+        # /ws/ludo/1/?player_token=ABC
         # --------------------------------------------------
 
         query_string = (
@@ -91,14 +113,13 @@ class LudoGameConsumer(AsyncWebsocketConsumer):
             []
         )
 
-        self.player_token = (
-            token_list[0]
-            if token_list
-            else "Unknown_Device"
-        )
+        if token_list:
+            self.player_token = token_list[0]
+        else:
+            self.player_token = "Unknown_Device"
 
         # --------------------------------------------------
-        # Join WebSocket group
+        # Join channel group
         # --------------------------------------------------
 
         await self.channel_layer.group_add(
@@ -109,8 +130,8 @@ class LudoGameConsumer(AsyncWebsocketConsumer):
         await self.accept()
 
         print(
-            f"▼ WS CONNECTED: "
-            f"Game={self.game_id} "
+            f"▼ WS CONNECTED | "
+            f"Game={self.game_id} | "
             f"Player={self.player_token}"
         )
 
@@ -132,9 +153,10 @@ class LudoGameConsumer(AsyncWebsocketConsumer):
         )
 
         print(
-            f"▲ WS DISCONNECTED: "
-            f"Game={self.game_id} "
-            f"Player={self.player_token}"
+            f"▲ WS DISCONNECTED | "
+            f"Game={getattr(self, 'game_id', '?')} | "
+            f"Player={getattr(self, 'player_token', '?')} | "
+            f"Code={close_code}"
         )
 
     # ======================================================
@@ -143,14 +165,26 @@ class LudoGameConsumer(AsyncWebsocketConsumer):
 
     def is_current_players_turn(self, state):
 
-        current_color = (
-            state["player_turn_order"][
-                state["turn_index"]
-            ]
+        turn_order = state.get(
+            "player_turn_order",
+            []
         )
 
+        if not turn_order:
+            return False
+
+        turn_index = state.get(
+            "turn_index",
+            0
+        )
+
+        if turn_index >= len(turn_order):
+            return False
+
+        current_color = turn_order[turn_index]
+
         assigned_color = (
-            state["player_assignments"]
+            state.get("player_assignments", {})
             .get(self.player_token)
         )
 
@@ -162,10 +196,12 @@ class LudoGameConsumer(AsyncWebsocketConsumer):
 
     def get_device_for_color(self, state, color):
 
-        for (
-            device_token,
-            assigned_color
-        ) in state["player_assignments"].items():
+        assignments = state.get(
+            "player_assignments",
+            {}
+        )
+
+        for device_token, assigned_color in assignments.items():
 
             if assigned_color == color:
                 return device_token
@@ -180,18 +216,17 @@ class LudoGameConsumer(AsyncWebsocketConsumer):
 
         player_tokens = [
             token
-            for token in state["tokens"]
-            if token["color"] == color
+            for token in state.get("tokens", [])
+            if token.get("color") == color
         ]
 
-        # A Ludo player has 4 tokens.
-        #
-        # Player wins when all 4 reach position 56.
+        # Exactly four tokens must exist
+        # and all four must reach position 56.
 
         return (
             len(player_tokens) == 4
             and all(
-                token["position"] == 56
+                token.get("position") == 56
                 for token in player_tokens
             )
         )
@@ -213,7 +248,7 @@ class LudoGameConsumer(AsyncWebsocketConsumer):
         )
 
     # ======================================================
-    # HANDLE WINNER
+    # HANDLE GAME WINNER
     # ======================================================
 
     async def handle_game_winner(
@@ -223,7 +258,7 @@ class LudoGameConsumer(AsyncWebsocketConsumer):
     ):
 
         # --------------------------------------------------
-        # Find device token belonging to winning color
+        # Find winning device
         # --------------------------------------------------
 
         winning_device_token = (
@@ -238,8 +273,15 @@ class LudoGameConsumer(AsyncWebsocketConsumer):
             state["game_status"] = "PAYOUT_ERROR"
 
             state["status_text"] = (
-                "Winner detected, but "
-                "player identity could not be found."
+                "Winner detected, but player identity "
+                "could not be found."
+            )
+
+            print(
+                f"❌ PAYOUT ERROR | "
+                f"Game={self.game_id} | "
+                f"Winner={winning_color} | "
+                f"Device not found"
             )
 
             return
@@ -248,36 +290,91 @@ class LudoGameConsumer(AsyncWebsocketConsumer):
         # Execute atomic database payout
         # --------------------------------------------------
 
-        result = await self.payout_winner(
-            self.game_id,
-            winning_device_token,
-        )
+        try:
 
-        # --------------------------------------------------
-        # Payout failed
-        # --------------------------------------------------
+            result = await self.payout_winner(
+                self.game_id,
+                winning_device_token,
+            )
 
-        if not result["success"]:
+        except Exception as e:
 
             state["game_status"] = "PAYOUT_ERROR"
 
             state["status_text"] = (
-                f"{winning_color} won, "
-                f"but payout failed: "
-                f"{result['message']}"
+                "Winner detected, but an internal "
+                "payout error occurred."
             )
 
             print(
-                f"❌ PAYOUT FAILED: "
-                f"Game={self.game_id} "
-                f"Winner={winning_device_token} "
-                f"Reason={result['message']}"
+                f"❌ PAYOUT EXCEPTION | "
+                f"Game={self.game_id} | "
+                f"Winner={winning_device_token} | "
+                f"Error={e}"
             )
 
             return
 
         # --------------------------------------------------
-        # Payout succeeded
+        # IMPORTANT
+        #
+        # finalize_wager_game() returns:
+        #
+        # {
+        #     "status": "success",
+        #     ...
+        # }
+        #
+        # NOT:
+        #
+        # {
+        #     "success": True
+        # }
+        # --------------------------------------------------
+
+        payout_success = (
+            isinstance(result, dict)
+            and result.get("status") == "success"
+        )
+
+        # --------------------------------------------------
+        # PAYOUT FAILED
+        # --------------------------------------------------
+
+        if not payout_success:
+
+            state["game_status"] = "PAYOUT_ERROR"
+
+            if isinstance(result, dict):
+
+                error_message = result.get(
+                    "message",
+                    "Unknown payout error.",
+                )
+
+            else:
+
+                error_message = (
+                    "Invalid payout response."
+                )
+
+            state["status_text"] = (
+                f"{winning_color} won, "
+                f"but payout failed: "
+                f"{error_message}"
+            )
+
+            print(
+                f"❌ PAYOUT FAILED | "
+                f"Game={self.game_id} | "
+                f"Winner={winning_device_token} | "
+                f"Reason={error_message}"
+            )
+
+            return
+
+        # --------------------------------------------------
+        # PAYOUT SUCCESS
         # --------------------------------------------------
 
         state["winner"] = winning_color
@@ -288,31 +385,42 @@ class LudoGameConsumer(AsyncWebsocketConsumer):
 
         state["game_status"] = "COMPLETED"
 
-        state["winner_payout"] = (
-            result["winner_payout"]
+        state["winner_payout"] = int(
+            result.get(
+                "winner_payout",
+                0,
+            )
         )
 
-        state["platform_fee"] = (
-            result["service_fee"]
+        state["platform_fee"] = int(
+            result.get(
+                "service_fee",
+                0,
+            )
         )
 
-        state["total_pool"] = (
-            result["total_pool"]
+        state["total_pool"] = int(
+            result.get(
+                "total_pool",
+                0,
+            )
         )
+
+        state["has_rolled"] = False
 
         state["status_text"] = (
             f"{winning_color} WON! "
-            f"{result['winner_payout']} "
+            f"{state['winner_payout']} "
             f"coins awarded."
         )
 
         print(
-            f"🏆 GAME WON: "
-            f"Game={self.game_id} "
-            f"Winner={winning_color} "
-            f"Device={winning_device_token} "
-            f"Payout={result['winner_payout']} "
-            f"Fee={result['service_fee']}"
+            f"🏆 GAME WON | "
+            f"Game={self.game_id} | "
+            f"Winner={winning_color} | "
+            f"Device={winning_device_token} | "
+            f"Payout={state['winner_payout']} | "
+            f"Fee={state['platform_fee']}"
         )
 
     # ======================================================
@@ -321,32 +429,176 @@ class LudoGameConsumer(AsyncWebsocketConsumer):
 
     async def receive(self, text_data):
 
+        # --------------------------------------------------
+        # Parse JSON
+        # --------------------------------------------------
+
         try:
+
             data = json.loads(text_data)
 
-        except Exception:
+        except (json.JSONDecodeError, TypeError):
+
+            print(
+                f"⚠️ INVALID JSON | "
+                f"Game={self.game_id} | "
+                f"Player={self.player_token}"
+            )
+
             return
 
         action = data.get("action")
+
+        # --------------------------------------------------
+        # Get active state
+        # --------------------------------------------------
 
         state = ACTIVE_GAMES.get(
             self.game_id
         )
 
         if not state:
+
+            print(
+                f"⚠️ GAME STATE NOT FOUND | "
+                f"Game={self.game_id}"
+            )
+
             return
 
-        # --------------------------------------------------
-        # Prevent actions after game completion
-        # --------------------------------------------------
+        # ==================================================
+        # TEST FINISH BLUE
+        # ==================================================
+        #
+        # This branch MUST be inside receive().
+        #
+        # It moves all four BLUE tokens to 56.
+        #
+        # Then it calls the EXACT SAME winner/payout
+        # logic used by the real game.
+        #
+        # ==================================================
 
-        if state.get("game_status") == "COMPLETED":
+        if action == "test_finish_blue":
+
+            if not TEST_MODE:
+
+                print(
+                    f"⚠️ TEST ACTION BLOCKED | "
+                    f"Game={self.game_id} | "
+                    f"Player={self.player_token}"
+                )
+
+                state["status_text"] = (
+                    "Testing controls are disabled."
+                )
+
+                await self.broadcast_current_state()
+
+                return
+
+            # --------------------------------------------------
+            # Do not test an already completed game
+            # --------------------------------------------------
+
+            if state.get("game_status") in (
+                "COMPLETED",
+                "PAYOUT_ERROR",
+            ):
+
+                state["status_text"] = (
+                    "Game has already finished."
+                )
+
+                await self.broadcast_current_state()
+
+                return
+
+            print(
+                f"🧪 TEST FINISH BLUE | "
+                f"Game={self.game_id} | "
+                f"RequestedBy={self.player_token}"
+            )
+
+            # --------------------------------------------------
+            # Find BLUE tokens
+            # --------------------------------------------------
+
+            blue_tokens = [
+                token
+                for token in state.get("tokens", [])
+                if token.get("color") == "BLUE"
+            ]
+
+            # --------------------------------------------------
+            # Validate four BLUE tokens
+            # --------------------------------------------------
+
+            if len(blue_tokens) != 4:
+
+                state["status_text"] = (
+                    "TEST ERROR: BLUE does not "
+                    "have exactly 4 tokens."
+                )
+
+                print(
+                    f"❌ TEST FINISH FAILED | "
+                    f"Game={self.game_id} | "
+                    f"BlueTokens={len(blue_tokens)}"
+                )
+
+                await self.broadcast_current_state()
+
+                return
+
+            # --------------------------------------------------
+            # Move ALL BLUE tokens to position 56
+            # --------------------------------------------------
+
+            for token in blue_tokens:
+
+                token["position"] = 56
+
+            # --------------------------------------------------
+            # Force BLUE winner
+            # --------------------------------------------------
+
+            state["winner"] = "BLUE"
+
+            state["game_status"] = "WON"
+
+            state["has_rolled"] = False
+
+            state["status_text"] = (
+                "BLUE test finish triggered. "
+                "Processing payout..."
+            )
+
+            # --------------------------------------------------
+            # Use normal payout path
+            # --------------------------------------------------
+
+            await self.handle_game_winner(
+                state,
+                "BLUE",
+            )
+
+            # --------------------------------------------------
+            # Broadcast final result
+            # --------------------------------------------------
 
             await self.broadcast_current_state()
 
             return
 
-        if state.get("game_status") == "PAYOUT_ERROR":
+        # ==================================================
+        # BLOCK NORMAL ACTIONS AFTER COMPLETION
+        # ==================================================
+
+        if state.get("game_status") in (
+            "COMPLETED",
+            "PAYOUT_ERROR",
+        ):
 
             await self.broadcast_current_state()
 
@@ -361,8 +613,9 @@ class LudoGameConsumer(AsyncWebsocketConsumer):
             if not self.is_current_players_turn(state):
 
                 print(
-                    f"⚠️ REJECTED ROLL: "
-                    f"{self.player_token}"
+                    f"⚠️ REJECTED ROLL | "
+                    f"Game={self.game_id} | "
+                    f"Player={self.player_token}"
                 )
 
                 return
@@ -380,8 +633,9 @@ class LudoGameConsumer(AsyncWebsocketConsumer):
             if not self.is_current_players_turn(state):
 
                 print(
-                    f"⚠️ REJECTED MOVE: "
-                    f"{self.player_token}"
+                    f"⚠️ REJECTED MOVE | "
+                    f"Game={self.game_id} | "
+                    f"Player={self.player_token}"
                 )
 
                 return
@@ -391,6 +645,21 @@ class LudoGameConsumer(AsyncWebsocketConsumer):
                 data.get("token_id"),
                 data.get("color"),
             )
+
+        # ==================================================
+        # UNKNOWN ACTION
+        # ==================================================
+
+        else:
+
+            print(
+                f"⚠️ UNKNOWN ACTION | "
+                f"Game={self.game_id} | "
+                f"Player={self.player_token} | "
+                f"Action={action}"
+            )
+
+            return
 
         # --------------------------------------------------
         # Broadcast new state
@@ -404,26 +673,57 @@ class LudoGameConsumer(AsyncWebsocketConsumer):
 
     async def handle_dice_roll(self, state):
 
-        # Already rolled and waiting for movement
-        if state["has_rolled"]:
+        # --------------------------------------------------
+        # Already rolled
+        # --------------------------------------------------
+
+        if state.get("has_rolled"):
+
             return
 
-        roll = random.randint(1, 6)
+        # --------------------------------------------------
+        # Validate turn
+        # --------------------------------------------------
+
+        turn_order = state.get(
+            "player_turn_order",
+            []
+        )
+
+        if not turn_order:
+
+            return
+
+        turn_index = state.get(
+            "turn_index",
+            0
+        )
+
+        if turn_index >= len(turn_order):
+
+            return
+
+        current_player = turn_order[
+            turn_index
+        ]
+
+        # --------------------------------------------------
+        # Roll
+        # --------------------------------------------------
+
+        roll = random.randint(
+            1,
+            6,
+        )
 
         state["current_dice_value"] = roll
 
         state["has_rolled"] = True
 
-        current_player = (
-            state["player_turn_order"][
-                state["turn_index"]
-            ]
-        )
-
         player_tokens = [
             token
-            for token in state["tokens"]
-            if token["color"] == current_player
+            for token in state.get("tokens", [])
+            if token.get("color") == current_player
         ]
 
         # --------------------------------------------------
@@ -434,22 +734,29 @@ class LudoGameConsumer(AsyncWebsocketConsumer):
 
         for token in player_tokens:
 
-            # Token in yard
+            position = token.get(
+                "position",
+                -1,
+            )
+
+            # Base token requires 6
             if (
-                token["position"] == -1
+                position == -1
                 and roll == 6
             ):
+
                 valid_moves += 1
 
-            # Token already on board
+            # Normal board
             elif (
-                0 <= token["position"] <= 55
-                and token["position"] + roll <= 56
+                0 <= position <= 55
+                and position + roll <= 56
             ):
+
                 valid_moves += 1
 
         # --------------------------------------------------
-        # No valid moves
+        # No moves
         # --------------------------------------------------
 
         if valid_moves == 0:
@@ -458,15 +765,11 @@ class LudoGameConsumer(AsyncWebsocketConsumer):
 
             state["turn_index"] = (
                 state["turn_index"] + 1
-            ) % len(
-                state["player_turn_order"]
-            )
+            ) % len(turn_order)
 
-            next_player = (
-                state["player_turn_order"][
-                    state["turn_index"]
-                ]
-            )
+            next_player = turn_order[
+                state["turn_index"]
+            ]
 
             state["status_text"] = (
                 f"{current_player} rolled "
@@ -493,17 +796,34 @@ class LudoGameConsumer(AsyncWebsocketConsumer):
     ):
 
         # --------------------------------------------------
-        # Must have rolled first
+        # Must roll first
         # --------------------------------------------------
 
-        if not state["has_rolled"]:
+        if not state.get("has_rolled"):
+
             return
 
-        current_player = (
-            state["player_turn_order"][
-                state["turn_index"]
-            ]
+        # --------------------------------------------------
+        # Current player
+        # --------------------------------------------------
+
+        turn_order = state.get(
+            "player_turn_order",
+            []
         )
+
+        if not turn_order:
+
+            return
+
+        turn_index = state.get(
+            "turn_index",
+            0,
+        )
+
+        current_player = turn_order[
+            turn_index
+        ]
 
         # --------------------------------------------------
         # Color verification
@@ -525,28 +845,39 @@ class LudoGameConsumer(AsyncWebsocketConsumer):
         token = next(
             (
                 token
-                for token in state["tokens"]
+                for token in state.get("tokens", [])
                 if (
-                    token["id"] == token_id
-                    and token["color"] == color
+                    token.get("id") == token_id
+                    and token.get("color") == color
                 )
             ),
             None,
         )
 
-        if not token:
+        if token is None:
+
+            state["status_text"] = (
+                "Token not found."
+            )
+
             return
 
-        roll = state["current_dice_value"]
+        roll = int(
+            state.get(
+                "current_dice_value",
+                0,
+            )
+        )
 
         move_executed = False
 
+        # Six = bonus
         grant_bonus_roll = (
             roll == 6
         )
 
         # ==================================================
-        # BASE YARD BREAKOUT
+        # BASE -> START
         # ==================================================
 
         if (
@@ -564,7 +895,7 @@ class LudoGameConsumer(AsyncWebsocketConsumer):
             )
 
         # ==================================================
-        # NORMAL TRACK MOVEMENT
+        # NORMAL MOVEMENT
         # ==================================================
 
         elif 0 <= token["position"] <= 55:
@@ -586,9 +917,9 @@ class LudoGameConsumer(AsyncWebsocketConsumer):
                     f"forward by {roll}."
                 )
 
-                # ==========================================
-                # COLLISION / KILL LOGIC
-                # ==========================================
+                # ------------------------------------------
+                # Collision detection
+                # ------------------------------------------
 
                 target_global_cell = (
                     get_global_cell_index(
@@ -603,19 +934,28 @@ class LudoGameConsumer(AsyncWebsocketConsumer):
                     not in SAFE_GLOBAL_CELLS
                 ):
 
-                    for enemy_token in state["tokens"]:
+                    for enemy_token in state.get(
+                        "tokens",
+                        []
+                    ):
 
                         if (
-                            enemy_token["color"]
+                            enemy_token.get("color")
                             != color
-                            and enemy_token["position"]
-                            >= 0
+                            and enemy_token.get(
+                                "position",
+                                -1,
+                            ) >= 0
                         ):
 
                             enemy_global_cell = (
                                 get_global_cell_index(
-                                    enemy_token["color"],
-                                    enemy_token["position"],
+                                    enemy_token.get(
+                                        "color"
+                                    ),
+                                    enemy_token.get(
+                                        "position"
+                                    ),
                                 )
                             )
 
@@ -634,7 +974,6 @@ class LudoGameConsumer(AsyncWebsocketConsumer):
                                     "status_text"
                                 ] = (
                                     f"{color} kicked "
-                                    f"out "
                                     f"{enemy_token['color']}! "
                                     f"Bonus roll granted."
                                 )
@@ -647,30 +986,25 @@ class LudoGameConsumer(AsyncWebsocketConsumer):
 
             state["status_text"] = (
                 f"Invalid move for that token! "
-                f"{color}, select a different "
-                f"valid token piece."
+                f"{color}, select a valid token."
             )
 
             return
 
         # ==================================================
-        # CLEAR ROLL
+        # CLEAR DICE STATE
         # ==================================================
 
         state["has_rolled"] = False
 
         # ==================================================
-        # WIN CHECK
+        # CHECK WIN
         # ==================================================
 
         if self.has_player_won(
             state,
             color,
         ):
-
-            # ----------------------------------------------
-            # We have a winner.
-            # ----------------------------------------------
 
             state["winner"] = color
 
@@ -681,19 +1015,14 @@ class LudoGameConsumer(AsyncWebsocketConsumer):
                 f"Processing payout..."
             )
 
-            # ----------------------------------------------
-            # Process database payout
-            # ----------------------------------------------
+            # ------------------------------------------
+            # Real payout
+            # ------------------------------------------
 
             await self.handle_game_winner(
                 state,
                 color,
             )
-
-            # ----------------------------------------------
-            # IMPORTANT:
-            # Do not give another turn.
-            # ----------------------------------------------
 
             return
 
@@ -711,22 +1040,18 @@ class LudoGameConsumer(AsyncWebsocketConsumer):
             )
 
         # ==================================================
-        # NORMAL TURN CHANGE
+        # NEXT TURN
         # ==================================================
 
         if not grant_bonus_roll:
 
             state["turn_index"] = (
                 state["turn_index"] + 1
-            ) % len(
-                state["player_turn_order"]
-            )
+            ) % len(turn_order)
 
-            next_player = (
-                state["player_turn_order"][
-                    state["turn_index"]
-                ]
-            )
+            next_player = turn_order[
+                state["turn_index"]
+            ]
 
             state["status_text"] = (
                 f"{next_player}'s Turn! "
@@ -735,7 +1060,6 @@ class LudoGameConsumer(AsyncWebsocketConsumer):
 
         else:
 
-            # Same player gets another roll
             state["status_text"] = (
                 f"{color}'s Bonus Roll! "
                 f"Tap the dice."
@@ -752,6 +1076,7 @@ class LudoGameConsumer(AsyncWebsocketConsumer):
         )
 
         if not state:
+
             return
 
         await self.channel_layer.group_send(
@@ -763,7 +1088,7 @@ class LudoGameConsumer(AsyncWebsocketConsumer):
         )
 
     # ======================================================
-    # SEND STATE TO SOCKET
+    # SEND STATE TO CLIENT
     # ======================================================
 
     async def send_state_payload(
