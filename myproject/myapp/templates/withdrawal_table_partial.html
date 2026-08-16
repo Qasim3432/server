@@ -1,0 +1,214 @@
+<table id="ledgerTable">
+
+    <thead>
+
+        <tr>
+
+            <th>Player</th>
+
+            <th>Method</th>
+
+            <th>Account</th>
+
+            <th>Withdrawal</th>
+
+            <th>Balance</th>
+
+            <th>Status</th>
+
+            <th>Action</th>
+
+        </tr>
+
+    </thead>
+
+
+    <tbody>
+
+        {% for item in withdrawal_items %}
+
+        <tr>
+
+            <!-- PLAYER -->
+            <td>
+
+                <div class="user-name">
+                    {{ item.request.device_token }}
+                </div>
+
+            </td>
+
+
+            <!-- METHOD -->
+            <td>
+
+                <span class="method">
+                    {{ item.request.method }}
+                </span>
+
+            </td>
+
+
+            <!-- ACCOUNT -->
+            <td>
+
+                <div class="user-name">
+                    {{ item.request.account_title }}
+                </div>
+
+                <div class="account-number">
+                    {{ item.request.account_number }}
+                </div>
+
+            </td>
+
+
+            <!-- WITHDRAWAL -->
+            <td>
+
+                <div class="amount">
+                    -{{ item.request.amount }} Coins
+                </div>
+
+            </td>
+
+
+            <!-- BALANCE -->
+            <td>
+
+                {% if item.has_enough %}
+
+                    <span class="balance">
+                        {{ item.current_balance }} Coins
+                    </span>
+
+                {% else %}
+
+                    <span class="balance insufficient">
+                        {{ item.current_balance }} Coins
+                    </span>
+
+                    <span class="warning">
+                        ⚠ Not enough balance
+                    </span>
+
+                {% endif %}
+
+            </td>
+
+
+            <!-- STATUS -->
+            <td>
+
+                <span class="status {{ item.request.status|lower }}">
+
+                    {% if item.request.status == "PENDING" %}
+                        ●
+                    {% elif item.request.status == "APPROVED" %}
+                        ✓
+                    {% else %}
+                        ×
+                    {% endif %}
+
+                    {{ item.request.status }}
+
+                </span>
+
+            </td>
+
+
+            <!-- ACTION -->
+            <td>
+
+                {% if item.request.status == 'PENDING' %}
+
+                    <div class="actions">
+
+                        {% if item.has_enough %}
+
+                            <button
+                                type="button"
+                                class="btn approve"
+                                onclick="event.stopPropagation(); openConfirmationModal(
+                                    '/management/dashboard/withdrawals/approve/{{ item.request.id }}/',
+                                    'approve',
+                                    '{{ item.request.amount }}'
+                                )">
+
+                                Approve
+
+                            </button>
+
+                        {% else %}
+
+                            <button
+                                type="button"
+                                class="btn approve"
+                                disabled
+                                title="Player does not have enough coins">
+
+                                Approve
+
+                            </button>
+
+                        {% endif %}
+
+
+                        <button
+                            type="button"
+                            class="btn reject"
+                            onclick="event.stopPropagation(); openConfirmationModal(
+                                '/management/dashboard/withdrawals/reject/{{ item.request.id }}/',
+                                'reject'
+                            )">
+
+                            Reject
+
+                        </button>
+
+                    </div>
+
+                {% else %}
+
+                    <span class="processed">
+                        Already processed
+                    </span>
+
+                {% endif %}
+
+            </td>
+
+        </tr>
+
+
+        {% empty %}
+
+        <tr>
+
+            <td colspan="7">
+
+                <div class="empty">
+
+                    <div class="empty-icon">
+                        ✓
+                    </div>
+
+                    <div class="empty-title">
+                        No withdrawal requests
+                    </div>
+
+                    <div class="empty-text">
+                        There are currently no withdrawal requests to review.
+                    </div>
+
+                </div>
+
+            </td>
+
+        </tr>
+
+        {% endfor %}
+
+    </tbody>
+
+</table>

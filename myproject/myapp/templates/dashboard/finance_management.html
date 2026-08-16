@@ -1,0 +1,711 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Finance Dashboard</title>
+
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+
+    <style>
+        body {
+            background: #f4f6f8;
+        }
+
+        .modal-backdrop {
+            background: rgba(15, 23, 42, 0.65);
+            backdrop-filter: blur(3px);
+        }
+
+        .modal-hidden {
+            display: none;
+        }
+    </style>
+</head>
+
+<body class="min-h-screen text-slate-900">
+
+    <!-- HEADER -->
+    <header class="bg-white border-b border-slate-200 sticky top-0 z-30">
+        <div class="max-w-6xl mx-auto px-4 sm:px-6 py-4">
+
+            <div class="flex items-center justify-between gap-4">
+
+                <div>
+                    <h1 class="text-2xl sm:text-3xl font-black text-slate-900">
+                        Finance
+                    </h1>
+
+                    <p class="text-sm text-slate-500 mt-1">
+                        Your platform's money overview
+                    </p>
+                </div>
+
+                <!-- CONFIGURATION BUTTON -->
+                <button
+                    type="button"
+                    onclick="openConfiguration()"
+                    class="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white font-bold px-4 py-3 rounded-xl shadow-sm transition">
+
+                    <span class="text-lg">⚙️</span>
+
+                    <span class="hidden sm:inline">
+                        Configuration
+                    </span>
+
+                    <span class="sm:hidden">
+                        Settings
+                    </span>
+
+                </button>
+
+            </div>
+
+        </div>
+    </header>
+
+
+    <!-- MAIN -->
+    <main class="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
+
+
+        <!-- MESSAGES -->
+        {% if messages %}
+            <div class="mb-6 space-y-3">
+
+                {% for message in messages %}
+
+                    <div class="
+                        rounded-xl px-4 py-3
+                        border
+                        font-semibold text-sm
+
+                        {% if message.tags == 'success' %}
+                            bg-emerald-50
+                            border-emerald-200
+                            text-emerald-800
+                        {% else %}
+                            bg-red-50
+                            border-red-200
+                            text-red-800
+                        {% endif %}
+                    ">
+
+                        {% if message.tags == 'success' %}
+                            ✓
+                        {% else %}
+                            !
+                        {% endif %}
+
+                        {{ message }}
+
+                    </div>
+
+                {% endfor %}
+
+            </div>
+        {% endif %}
+
+
+        <!-- CURRENT SETTINGS SUMMARY -->
+        <section class="bg-slate-900 text-white rounded-2xl p-5 sm:p-6 mb-6 shadow-sm">
+
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-5">
+
+                <div>
+                    <p class="text-xs font-bold uppercase tracking-wider text-slate-400">
+                        Current Game Split
+                    </p>
+
+                    <h2 class="text-xl sm:text-2xl font-black mt-1">
+                        How each game pool is divided
+                    </h2>
+                </div>
+
+
+                <div class="flex items-center gap-3">
+
+                    <div class="text-center">
+                        <div class="text-2xl font-black text-emerald-400">
+                            {{ config.winner_payout_percentage }}%
+                        </div>
+
+                        <div class="text-xs text-slate-400">
+                            Winner
+                        </div>
+                    </div>
+
+                    <div class="text-slate-500 text-xl">
+                        +
+                    </div>
+
+                    <div class="text-center">
+                        <div class="text-2xl font-black text-blue-400">
+                            {{ config.platform_tax_percentage }}%
+                        </div>
+
+                        <div class="text-xs text-slate-400">
+                            Platform
+                        </div>
+                    </div>
+
+                </div>
+
+            </div>
+
+        </section>
+
+
+        <!-- FINANCE CARDS -->
+        <section>
+
+            <div class="flex items-center justify-between mb-4">
+
+                <div>
+                    <h2 class="text-lg font-black text-slate-900">
+                        Money Overview
+                    </h2>
+
+                    <p class="text-sm text-slate-500">
+                        Current activity across your platform
+                    </p>
+                </div>
+
+            </div>
+
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+
+
+                <!-- MONEY IN -->
+                <div class="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+
+                    <div class="flex items-start justify-between">
+
+                        <div>
+                            <p class="text-sm font-bold text-slate-500">
+                                Money In
+                            </p>
+
+                            <p class="text-xs text-slate-400 mt-1">
+                                Approved deposits
+                            </p>
+                        </div>
+
+                        <div class="w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center text-xl">
+                            ↓
+                        </div>
+
+                    </div>
+
+                    <div class="mt-5">
+
+                        <div class="text-3xl sm:text-4xl font-black text-emerald-600">
+                            {{ metrics.total_credited_inflow }}
+                        </div>
+
+                        <div class="text-sm font-semibold text-slate-400 mt-1">
+                            Coins
+                        </div>
+
+                    </div>
+
+                </div>
+
+
+                <!-- MONEY OUT -->
+                <div class="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+
+                    <div class="flex items-start justify-between">
+
+                        <div>
+                            <p class="text-sm font-bold text-slate-500">
+                                Money Out
+                            </p>
+
+                            <p class="text-xs text-slate-400 mt-1">
+                                Approved withdrawals
+                            </p>
+                        </div>
+
+                        <div class="w-10 h-10 rounded-xl bg-red-100 flex items-center justify-center text-xl">
+                            ↑
+                        </div>
+
+                    </div>
+
+                    <div class="mt-5">
+
+                        <div class="text-3xl sm:text-4xl font-black text-red-600">
+                            {{ metrics.total_debited_outflow }}
+                        </div>
+
+                        <div class="text-sm font-semibold text-slate-400 mt-1">
+                            Coins
+                        </div>
+
+                    </div>
+
+                </div>
+
+
+                <!-- REVENUE -->
+                <div class="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+
+                    <div class="flex items-start justify-between">
+
+                        <div>
+                            <p class="text-sm font-bold text-slate-500">
+                                Platform Revenue
+                            </p>
+
+                            <p class="text-xs text-slate-400 mt-1">
+                                Fees collected from games
+                            </p>
+                        </div>
+
+                        <div class="w-10 h-10 rounded-xl bg-blue-100 flex items-center justify-center text-xl">
+                            💰
+                        </div>
+
+                    </div>
+
+                    <div class="mt-5">
+
+                        <div class="text-3xl sm:text-4xl font-black text-blue-600">
+                            {{ metrics.total_revenue_earned }}
+                        </div>
+
+                        <div class="text-sm font-semibold text-slate-400 mt-1">
+                            Coins
+                        </div>
+
+                    </div>
+
+                </div>
+
+
+                <!-- PLAYER BALANCE -->
+                <div class="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+
+                    <div class="flex items-start justify-between">
+
+                        <div>
+                            <p class="text-sm font-bold text-slate-500">
+                                Player Balance
+                            </p>
+
+                            <p class="text-xs text-slate-400 mt-1">
+                                Coins currently held
+                            </p>
+                        </div>
+
+                        <div class="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center text-xl">
+                            🪙
+                        </div>
+
+                    </div>
+
+                    <div class="mt-5">
+
+                        <div class="text-3xl sm:text-4xl font-black text-slate-900">
+                            {{ metrics.total_system_liability }}
+                        </div>
+
+                        <div class="text-sm font-semibold text-slate-400 mt-1">
+                            Coins
+                        </div>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+        </section>
+
+
+        <!-- SMALL BREAKDOWN -->
+        <section class="mt-6 bg-white border border-slate-200 rounded-2xl p-5">
+
+            <h3 class="font-black text-slate-900">
+                Quick Breakdown
+            </h3>
+
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-5">
+
+                <div>
+                    <p class="text-xs font-semibold text-slate-400">
+                        Deposits
+                    </p>
+
+                    <p class="text-lg font-black text-slate-900 mt-1">
+                        {{ breakdown.approved_deposits }}
+                    </p>
+                </div>
+
+
+                <div>
+                    <p class="text-xs font-semibold text-slate-400">
+                        Bonuses
+                    </p>
+
+                    <p class="text-lg font-black text-slate-900 mt-1">
+                        {{ breakdown.issued_bonuses }}
+                    </p>
+                </div>
+
+
+                <div>
+                    <p class="text-xs font-semibold text-slate-400">
+                        Available Coins
+                    </p>
+
+                    <p class="text-lg font-black text-slate-900 mt-1">
+                        {{ breakdown.liquid_supply }}
+                    </p>
+                </div>
+
+
+                <div>
+                    <p class="text-xs font-semibold text-slate-400">
+                        In Games
+                    </p>
+
+                    <p class="text-lg font-black text-slate-900 mt-1">
+                        {{ breakdown.locked_escrow }}
+                    </p>
+                </div>
+
+            </div>
+
+        </section>
+
+
+        <!-- CONFIGURATION BUTTON BOTTOM -->
+        <div class="mt-6 flex justify-center">
+
+            <button
+                type="button"
+                onclick="openConfiguration()"
+                class="w-full sm:w-auto bg-slate-900 hover:bg-slate-800 text-white font-bold px-8 py-4 rounded-xl transition">
+
+                ⚙️ Change Finance Settings
+
+            </button>
+
+        </div>
+
+    </main>
+
+
+    <!-- ========================================= -->
+    <!-- CONFIGURATION MODAL -->
+    <!-- ========================================= -->
+
+    <div
+        id="configurationModal"
+        class="modal-hidden fixed inset-0 z-50 modal-backdrop flex items-center justify-center p-4">
+
+        <div
+            class="bg-white w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden"
+            onclick="event.stopPropagation()">
+
+
+            <!-- MODAL HEADER -->
+            <div class="px-5 sm:px-6 py-5 border-b border-slate-200">
+
+                <div class="flex items-center justify-between">
+
+                    <div>
+
+                        <h2 class="text-xl sm:text-2xl font-black text-slate-900">
+                            Finance Settings
+                        </h2>
+
+                        <p class="text-sm text-slate-500 mt-1">
+                            Change how your game money is divided.
+                        </p>
+
+                    </div>
+
+
+                    <button
+                        type="button"
+                        onclick="closeConfiguration()"
+                        class="w-9 h-9 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xl">
+
+                        ×
+
+                    </button>
+
+                </div>
+
+            </div>
+
+
+            <!-- FORM -->
+            <form method="POST">
+
+                {% csrf_token %}
+
+                <div class="p-5 sm:p-6 space-y-5">
+
+
+                    <!-- REFERRAL BONUS -->
+                    <div>
+
+                        <label class="block font-bold text-slate-900 mb-2">
+                            Referral Bonus
+                        </label>
+
+                        <p class="text-xs text-slate-500 mb-2">
+                            Percentage given to the person who referred a player after a withdrawal.
+                        </p>
+
+                        <div class="relative">
+
+                            <input
+                                type="number"
+                                name="withdrawal_commission"
+                                value="{{ config.withdrawal_commission_percentage }}"
+                                min="0"
+                                max="100"
+                                required
+                                class="w-full border-2 border-slate-200 focus:border-blue-500 rounded-xl px-4 py-3 pr-12 text-lg font-bold text-slate-900 outline-none">
+
+                            <span class="absolute right-4 top-3.5 font-bold text-slate-400">
+                                %
+                            </span>
+
+                        </div>
+
+                    </div>
+
+
+                    <!-- PLATFORM FEE -->
+                    <div>
+
+                        <label class="block font-bold text-slate-900 mb-2">
+                            Platform Fee
+                        </label>
+
+                        <p class="text-xs text-slate-500 mb-2">
+                            Percentage kept by the platform from each completed game.
+                        </p>
+
+                        <div class="relative">
+
+                            <input
+                                id="platformTax"
+                                type="number"
+                                name="platform_tax"
+                                value="{{ config.platform_tax_percentage }}"
+                                min="0"
+                                max="100"
+                                required
+                                oninput="updateSplit()"
+                                class="w-full border-2 border-slate-200 focus:border-blue-500 rounded-xl px-4 py-3 pr-12 text-lg font-bold text-slate-900 outline-none">
+
+                            <span class="absolute right-4 top-3.5 font-bold text-slate-400">
+                                %
+                            </span>
+
+                        </div>
+
+                    </div>
+
+
+                    <!-- WINNER PAYOUT -->
+                    <div>
+
+                        <label class="block font-bold text-slate-900 mb-2">
+                            Winner Gets
+                        </label>
+
+                        <p class="text-xs text-slate-500 mb-2">
+                            Percentage of the game pool paid to the winner.
+                        </p>
+
+                        <div class="relative">
+
+                            <input
+                                id="winnerPayout"
+                                type="number"
+                                name="winner_payout"
+                                value="{{ config.winner_payout_percentage }}"
+                                min="0"
+                                max="100"
+                                required
+                                oninput="updateSplit()"
+                                class="w-full border-2 border-slate-200 focus:border-blue-500 rounded-xl px-4 py-3 pr-12 text-lg font-bold text-slate-900 outline-none">
+
+                            <span class="absolute right-4 top-3.5 font-bold text-slate-400">
+                                %
+                            </span>
+
+                        </div>
+
+                    </div>
+
+
+                    <!-- SPLIT PREVIEW -->
+                    <div class="bg-slate-100 rounded-xl p-4">
+
+                        <div class="flex justify-between items-center mb-3">
+
+                            <span class="text-sm font-bold text-slate-600">
+                                Game Pool Split
+                            </span>
+
+                            <span
+                                id="splitStatus"
+                                class="text-xs font-bold text-emerald-600">
+                                100% ✓
+                            </span>
+
+                        </div>
+
+
+                        <div class="h-4 bg-slate-300 rounded-full overflow-hidden flex">
+
+                            <div
+                                id="winnerBar"
+                                class="bg-emerald-500 h-full transition-all"
+                                style="width: {{ config.winner_payout_percentage }}%">
+                            </div>
+
+                            <div
+                                id="platformBar"
+                                class="bg-blue-600 h-full transition-all"
+                                style="width: {{ config.platform_tax_percentage }}%">
+                            </div>
+
+                        </div>
+
+
+                        <div class="flex justify-between text-xs font-semibold mt-2">
+
+                            <span class="text-emerald-600">
+                                Winner
+                            </span>
+
+                            <span class="text-blue-600">
+                                Platform
+                            </span>
+
+                        </div>
+
+                    </div>
+
+                </div>
+
+
+                <!-- MODAL FOOTER -->
+                <div class="bg-slate-50 border-t border-slate-200 px-5 sm:px-6 py-4 flex flex-col-reverse sm:flex-row gap-3 sm:justify-end">
+
+                    <button
+                        type="button"
+                        onclick="closeConfiguration()"
+                        class="w-full sm:w-auto px-5 py-3 rounded-xl font-bold text-slate-600 bg-white border border-slate-200 hover:bg-slate-100">
+
+                        Cancel
+
+                    </button>
+
+
+                    <button
+                        type="submit"
+                        class="w-full sm:w-auto px-6 py-3 rounded-xl font-bold text-white bg-blue-600 hover:bg-blue-700 shadow-sm">
+
+                        Save Changes
+
+                    </button>
+
+                </div>
+
+            </form>
+
+        </div>
+
+    </div>
+
+
+    <!-- JAVASCRIPT -->
+    <script>
+
+        const modal = document.getElementById("configurationModal");
+
+        function openConfiguration() {
+            modal.classList.remove("modal-hidden");
+            document.body.style.overflow = "hidden";
+            updateSplit();
+        }
+
+        function closeConfiguration() {
+            modal.classList.add("modal-hidden");
+            document.body.style.overflow = "";
+        }
+
+
+        /* Close when clicking outside modal */
+        modal.addEventListener("click", function(event) {
+
+            if (event.target === modal) {
+                closeConfiguration();
+            }
+
+        });
+
+
+        /* ESC closes configuration */
+        document.addEventListener("keydown", function(event) {
+
+            if (event.key === "Escape") {
+                closeConfiguration();
+            }
+
+        });
+
+
+        /* Live percentage preview */
+        function updateSplit() {
+
+            const platformInput = document.getElementById("platformTax");
+            const winnerInput = document.getElementById("winnerPayout");
+
+            const platform = parseInt(platformInput.value) || 0;
+            const winner = parseInt(winnerInput.value) || 0;
+
+            const total = platform + winner;
+
+            const winnerBar = document.getElementById("winnerBar");
+            const platformBar = document.getElementById("platformBar");
+            const status = document.getElementById("splitStatus");
+
+            winnerBar.style.width = Math.min(winner, 100) + "%";
+            platformBar.style.width = Math.min(platform, 100) + "%";
+
+
+            if (total === 100) {
+
+                status.textContent = "100% ✓";
+                status.className = "text-xs font-bold text-emerald-600";
+
+            } else {
+
+                status.textContent = total + "% — must equal 100%";
+                status.className = "text-xs font-bold text-red-600";
+
+            }
+
+        }
+
+
+        updateSplit();
+
+    </script>
+
+</body>
+</html>

@@ -1,0 +1,169 @@
+<table id="depositLedgerTable">
+
+    <thead>
+        <tr>
+            <th>Device Token</th>
+            <th>Method</th>
+            <th>Sender</th>
+            <th>Amount</th>
+            <th>Status</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+
+    <tbody>
+
+        {% for deposit in deposit_items %}
+
+        <tr>
+
+            <!-- DEVICE -->
+            <td>
+                <span class="token">
+                    {{ deposit.device_token }}
+                </span>
+            </td>
+
+
+            <!-- METHOD -->
+            <td>
+                <span class="method">
+                    {{ deposit.payment_method }}
+                </span>
+            </td>
+
+
+            <!-- SENDER -->
+            <td>
+
+                <div class="sender">
+
+                    <span class="sender-name">
+                        {{ deposit.sender_name }}
+                    </span>
+
+                    <span class="sender-label">
+                        Deposit sender
+                    </span>
+
+                </div>
+
+            </td>
+
+
+            <!-- AMOUNT -->
+            <td>
+
+                <span class="amount positive">
+                    +{{ deposit.amount }} Coins
+                </span>
+
+            </td>
+
+
+            <!-- STATUS -->
+            <td>
+
+                {% if deposit.status == 'PENDING' %}
+
+                    <span class="status pending">
+                        <span class="status-dot"></span>
+                        Pending
+                    </span>
+
+                {% elif deposit.status == 'APPROVED' %}
+
+                    <span class="status approved">
+                        <span class="status-dot"></span>
+                        Approved
+                    </span>
+
+                {% elif deposit.status == 'REJECTED' %}
+
+                    <span class="status rejected">
+                        <span class="status-dot"></span>
+                        Rejected
+                    </span>
+
+                {% else %}
+
+                    <span class="status">
+                        {{ deposit.status }}
+                    </span>
+
+                {% endif %}
+
+            </td>
+
+
+            <!-- ACTIONS -->
+            <td>
+
+                <div class="actions">
+
+                    {% if deposit.status == 'PENDING' %}
+
+                        <button
+                            type="button"
+                            class="btn btn-approve"
+                            onclick="openConfirmationModal(
+                                '/management/dashboard/deposits/approve/{{ deposit.id }}/',
+                                'approve',
+                                '{{ deposit.amount }}'
+                            )"
+                        >
+                            Approve
+                        </button>
+
+                        <button
+                            type="button"
+                            class="btn btn-reject"
+                            onclick="openConfirmationModal(
+                                '/management/dashboard/deposits/reject/{{ deposit.id }}/',
+                                'reject'
+                            )"
+                        >
+                            Reject
+                        </button>
+
+                    {% else %}
+
+                        <span class="processed">
+                            Processed
+                        </span>
+
+                    {% endif %}
+
+                </div>
+
+            </td>
+
+        </tr>
+
+
+        {% empty %}
+
+        <tr>
+
+            <td
+                colspan="6"
+                class="empty"
+            >
+
+                <div class="empty-title">
+                    No deposit requests
+                </div>
+
+                <div class="empty-text">
+                    There are currently no incoming deposits waiting for verification.
+                </div>
+
+            </td>
+
+        </tr>
+
+        {% endfor %}
+
+    </tbody>
+
+</table>
