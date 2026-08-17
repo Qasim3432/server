@@ -1,16 +1,16 @@
-#server
-working on this server 
-## Things remaining to work:
 
-1.production ready authentication
-2.profile session management
-3.anti-bot system
-4.transiction id
-5.A Computer player
-6.Friends
-7.creation of room
-8.better referral system
-9.interuser chat
+# Server Development
+
+## Things Remaining to Work:
+- [ ] **Production-Ready Authentication** - Secure token handling and encryption.
+- [ ] **Profile Session Management** - Active session tracking and validation.
+- [ ] **Anti-Bot System** - Rate-limiting and automated client detection.
+- [ ] **Transaction ID System** - Unique tracking hashes for data logs.
+- [ ] **AI / Computer Player** - Basic single-player bot logic.
+- [ ] **Friends System** - Social networking, user lookups, and friend requests.
+- [ ] **Room Creation** - Dynamic multiplayer lobbying and lobby logic.
+- [ ] **Enhanced Referral System** - Invite mechanics with reward tracking.
+- [ ] **Inter-User Chat** - Real-time websocket or polling communications.
 
 
 
