@@ -5,7 +5,7 @@ from .consumers import LudoGameConsumer
 
 websocket_urlpatterns = [
     re_path(
-        r"ws/ludo/(?P<game_id>\d+)/$",
+        r"ws/ludo/(?P<game_id>[0-9a-fA-F-]+)/$",
         LudoGameConsumer.as_asgi(),
     ),
 ]
