@@ -33,9 +33,11 @@
 
  Things to install 
 
- -Django
- -requests
- websockets
+ - Django
+ - 
+ - requests
+ - 
+ - websockets
  
 # Authentication
 
