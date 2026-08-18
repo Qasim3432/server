@@ -31,6 +31,12 @@
 
 ---
 
+ Things to install 
+
+ -Django
+ -requests
+ websockets
+ 
 # Authentication
 
 Production authentication is not yet implemented.
