@@ -65,7 +65,7 @@ This endpoint is available only when Django `DEBUG=True`.
 ### Endpoint
 
 ```http
-POST /TBD/
+POST /api/test/create-user/
 ```
 
 ### Headers
