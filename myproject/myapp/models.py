@@ -48,7 +48,6 @@ class SystemConfiguration(models.Model):
     def __str__(self):
         return f"System Matrix Rules [Tax: {self.platform_tax_percentage}% | Commission: {self.withdrawal_commission_percentage}%]"
 
-
 class UserProfileBalance(models.Model):
     nickname = models.CharField(max_length=100, blank=True, null=True, help_text="User's custom display name.")
     phone_number = models.CharField(max_length=20, blank=True, null=True, unique=True, help_text="Verified mobile number.")
@@ -75,17 +74,19 @@ class UserProfileBalance(models.Model):
         display_name = self.nickname if self.nickname else "Anonymous User"
         return f"{display_name} | {self.device_token} ({self.referral_code}) - Coins: {self.coins}"
 
-
 class ReferralSystem(models.Model):
     """Immutable mapping tracking systemic invitation connections and accumulated bonuses."""
     referrer = models.ForeignKey(UserProfileBalance, on_delete=models.CASCADE, related_name="referrals_initiated")
-    referred_user = models.OneToOneField(UserProfileBalance, on_delete=models.CASCADE, related_name="referred_by_link")
+    referred_user = models.ForeignKey(UserProfileBalance, on_delete=models.CASCADE, related_name="referred_by_link") # OneToOne -> ForeignKey
     total_commission_earned = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        unique_together = ('referred_user',) # 1 user sirf 1 baar code use kar payega
+        db_table = 'referral_system'
+
     def __str__(self):
         return f"Referrer: {self.referrer.referral_code} ➡️ Used By: {self.referred_user.referral_code}"
-
 
 class SystemTransactionLog(models.Model):
     """Explicit systemic auditing trace for compliance monitoring logs."""
@@ -105,7 +106,6 @@ class SystemTransactionLog(models.Model):
 
     def __str__(self):
         return f"[{self.log_type}] {self.user_profile.device_token}: {self.amount}"
-
 
 class GameRoom(models.Model):
     STATUS_CHOICES = [
@@ -137,7 +137,6 @@ class GameRoom(models.Model):
     def __str__(self):
         return f"Match {self.game_id} [{self.game_status}] Pool: {self.total_pool_escrow}"
 
-
 class SystemPaymentMethod(models.Model):
     """PAGE 2: Admin setup configuration containing accounts details (JazzCash, etc.)"""
     METHOD_CHOICES = [
@@ -152,7 +151,6 @@ class SystemPaymentMethod(models.Model):
 
     def __str__(self):
         return f"{self.get_method_type_display()} - {self.account_number}"
-
 
 class DepositRequest(models.Model):
     """PAGE 1: Core payment verification log ledger waiting for manual oversight"""
@@ -170,7 +168,6 @@ class DepositRequest(models.Model):
 
     def __str__(self):
         return f"{self.device_token} - {self.amount} ({self.status})"
-
 
 class WithdrawalRequest(models.Model):
     STATUS_CHOICES = [
