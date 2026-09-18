@@ -144,6 +144,8 @@ class SystemPaymentMethod(models.Model):
         ('JAZZCASH', 'JazzCash'),
         ('EASYPAISA', 'EasyPaisa'),
         ('BINANCE', 'Binance'),
+        ('NAYAPAY', 'Nayapay'),
+        ('SADAPAY', 'Sadapay'),
     ]
     method_type = models.CharField(max_length=20, choices=METHOD_CHOICES, unique=True)
     account_name = models.CharField(max_length=100)
@@ -183,6 +185,8 @@ class WithdrawalRequest(models.Model):
         ('JAZZCASH', 'JazzCash'),
         ('EASYPAISA', 'EasyPaisa'),
         ('BINANCE', 'Binance'),
+        ('NAYAPAY', 'Nayapay'),
+        ('SADAPAY', 'Sadapay'),
     ]
 
     device_token = models.CharField(max_length=150, db_index=True)
