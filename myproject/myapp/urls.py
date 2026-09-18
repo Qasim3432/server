@@ -58,7 +58,6 @@ urlpatterns = [
         name="initialize_game",
     ),
 
-
     # ==========================================================
     # 📱 CLIENT ENDPOINTS — MOBILE APP
     # ==========================================================
@@ -73,12 +72,17 @@ urlpatterns = [
         name="create_test_user",
     ),
 
+    path(  # YE NAYA ADD KIYA HAI
+        "api/register/",
+        create_test_user,
+        name="api_register",
+    ),
+
     path(
         "api/user/update-profile/",
         update_user_profile,
         name="update_user_profile",
     ),
-
 
     # --------------------------
     # REFERRALS
@@ -95,7 +99,6 @@ urlpatterns = [
         get_user_referral_code,
         name="get_user_referral_code",
     ),
-
 
     # --------------------------
     # DEPOSIT / WALLET
@@ -125,7 +128,6 @@ urlpatterns = [
         name="get_transaction_history",
     ),
 
-
     # --------------------------
     # WITHDRAWAL
     # --------------------------
@@ -135,7 +137,6 @@ urlpatterns = [
         submit_withdrawal_request,
         name="submit_withdrawal",
     ),
-
 
     # --------------------------
     # WAGER / GAME
@@ -159,7 +160,6 @@ urlpatterns = [
         name="cancel_game_wager",
     ),
 
-
     # ==========================================================
     # 🛡️ CUSTOM MANAGEMENT ADMIN PORTAL
     # ==========================================================
@@ -173,7 +173,6 @@ urlpatterns = [
         custom_admin_main_portal,
         name="custom_admin_main_portal",
     ),
-
 
     # --------------------------
     # DEPOSIT DASHBOARD
@@ -197,7 +196,6 @@ urlpatterns = [
         name="reject_deposit_custom",
     ),
 
-
     # --------------------------
     # WITHDRAWAL DASHBOARD
     # --------------------------
@@ -220,7 +218,6 @@ urlpatterns = [
         name="reject_withdrawal_custom",
     ),
 
-
     # --------------------------
     # PAYMENT SETTINGS
     # --------------------------
@@ -230,7 +227,6 @@ urlpatterns = [
         custom_admin_settings,
         name="custom_admin_settings",
     ),
-
 
     # --------------------------
     # FINANCE DASHBOARD
