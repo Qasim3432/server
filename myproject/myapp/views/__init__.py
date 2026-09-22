@@ -5,4 +5,6 @@ from .withdrawals import *
 from .games import *
 from .referrals import *
 from .profile import *
+from .gift import *
 from .admin import *
+from .admin_gift import *

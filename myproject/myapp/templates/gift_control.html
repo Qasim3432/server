@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Gift Control</title>
+    <style>
+        body { font-family: Arial; padding: 30px; background: #f5f5f5; display: flex; justify-content: center; align-items: flex-start; min-height: 100vh; margin: 0; }
+        .card { background: white; padding: 25px; border-radius: 10px; width: 100%; max-width: 400px; box-shadow: 0 2px 10px rgba(0,0,0,0.08); margin-top: 40px; }
+        label { display: block; margin-top: 15px; font-weight: bold; }
+        select, input { width: 100%; padding: 10px; margin-top: 5px; box-sizing: border-box; }
+        button { margin-top: 20px; padding: 12px; width: 100%; background: black; color: white; border: none; border-radius: 5px; cursor: pointer; }
+        h2 { margin: 0 0 10px 0; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>Gift Control</h2>
+        <form method="POST">
+            {% csrf_token %}
+            <label>Gift Enabled</label>
+            <select name="gift_enabled">
+                <option value="1" {% if gift_enabled == "1" %}selected{% endif %}>Enabled</option>
+                <option value="0" {% if gift_enabled == "0" %}selected{% endif %}>Disabled</option>
+            </select>
+            <label>Paid Spin Cost (PKR)</label>
+            <input type="number" name="paid_spin_cost" value="{{ paid_spin_cost }}">
+            <button type="submit">Save</button>
+        </form>
+    </div>
+</body>
+</html>

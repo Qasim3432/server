@@ -3,6 +3,44 @@ from django.utils import timezone
 from django.core.exceptions import ValidationError
 import secrets
 
+class SystemSetting(models.Model):
+    """Global key-value configuration store for dynamic admin controls."""
+
+    key = models.CharField(
+        max_length=100,
+        unique=True,
+        db_index=True,
+        help_text="Unique configuration identifier key."
+    )
+
+    value = models.CharField(
+        max_length=255,
+        default="",
+        blank=True,
+        help_text="Stored configuration value payload."
+    )
+
+    updated_at = models.DateTimeField(
+        auto_now=True,
+        help_text="Last configuration mutation timestamp."
+    )
+
+    class Meta:
+        verbose_name = "System Setting"
+        verbose_name_plural = "System Settings"
+
+    def __str__(self):
+        return f"Setting {self.key} = {self.value}"
+
+    @classmethod
+    def get_value(cls, key, default=""):
+        """Secure retrieval helper with graceful fallback defaults."""
+        try:
+            obj = cls.objects.get(key=key)
+            return obj.value
+        except cls.DoesNotExist:
+            return default
+
 class SystemConfiguration(models.Model):
     """Singleton pattern configuration controlling game economic variables globally."""
     withdrawal_commission_percentage = models.PositiveIntegerField(
@@ -29,7 +67,6 @@ class SystemConfiguration(models.Model):
 
     def save(self, *args, **kwargs):
         self.clean()
-        # Enforce Singleton pattern at database entry level
         self.pk = 1
         super().save(*args, **kwargs)
 
@@ -50,21 +87,24 @@ class SystemConfiguration(models.Model):
 
 class UserProfileBalance(models.Model):
     nickname = models.CharField(max_length=100, blank=True, null=True, help_text="User's custom display name.")
-    phone_number = models.CharField(max_length=20, blank=True, null=True, unique=True, help_text="Verified mobile number.")
+    email = models.EmailField(blank=True, null=True, unique=True, help_text="User email.")
+    profile_pic = models.ImageField(upload_to='profile_pics/', blank=True, null=True)
 
     """Player coin store keyed directly by hardware device tokens with unique referral codes."""
     device_token = models.CharField(max_length=255, unique=True, db_index=True)
     coins = models.IntegerField(default=0, help_text="Available active balance pool.")
     locked_coins = models.IntegerField(default=0, help_text="Escrowed coins held during active wagering matches.")
     referral_code = models.CharField(max_length=6, unique=True, db_index=True, blank=True)
+    
+    last_free_spin = models.BigIntegerField(default=0, help_text="Timestamp of last free spin in seconds") # 🟢 YE NAYA ADD KARO
+
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
 
     def save(self, *args, **kwargs):
         if not self.referral_code:
-            # Generate cryptographic secure uppercase alphanumeric codes without collision
             while True:
-                code = secrets.token_hex(3).upper() # 6 characters alphanumeric
+                code = secrets.token_hex(3).upper()
                 if not UserProfileBalance.objects.filter(referral_code=code).exists():
                     self.referral_code = code
                     break
@@ -77,12 +117,12 @@ class UserProfileBalance(models.Model):
 class ReferralSystem(models.Model):
     """Immutable mapping tracking systemic invitation connections and accumulated bonuses."""
     referrer = models.ForeignKey(UserProfileBalance, on_delete=models.CASCADE, related_name="referrals_initiated")
-    referred_user = models.ForeignKey(UserProfileBalance, on_delete=models.CASCADE, related_name="referred_by_link") # OneToOne -> ForeignKey
+    referred_user = models.ForeignKey(UserProfileBalance, on_delete=models.CASCADE, related_name="referred_by_link")
     total_commission_earned = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        unique_together = ('referred_user',) # 1 user sirf 1 baar code use kar payega
+        unique_together = ('referred_user',)
         db_table = 'referral_system'
 
     def __str__(self):
@@ -114,7 +154,6 @@ class GameRoom(models.Model):
         ('COMPLETED', 'Completed Ledger Payout'),
         ('CANCELLED', 'Rollback Cancelled Fail-Safe'),
     ]
-
     game_id = models.CharField(max_length=100, unique=True, db_index=True)
     bet_amount = models.IntegerField(default=0, help_text="Wager fee requirement per individual player profile.")
     total_pool_escrow = models.IntegerField(default=0, help_text="Total pooled contribution values in escrow.")
@@ -126,7 +165,6 @@ class GameRoom(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     def clean(self):
-        # Fail-safe check during validation loops to prevent coin leakage
         if self.game_status == 'ACTIVE' and (self.service_fee_cut + self.winner_payout != self.total_pool_escrow):
             raise ValidationError("Accounting Error: Combined platform fee and payout value mismatch total escrow pools.")
 
@@ -143,8 +181,6 @@ class SystemPaymentMethod(models.Model):
         ('JAZZCASH', 'JazzCash'),
         ('EASYPAISA', 'EasyPaisa'),
         ('BINANCE', 'Binance'),
-        ('NAYAPAY', 'Nayapay'),
-        ('SADAPAY', 'Sadapay'),
     ]
     method_type = models.CharField(max_length=20, choices=METHOD_CHOICES, unique=True)
     account_name = models.CharField(max_length=100)
@@ -177,15 +213,11 @@ class WithdrawalRequest(models.Model):
         ('APPROVED', 'Approved'),
         ('REJECTED', 'Rejected'),
     ]
-
     METHOD_CHOICES = [
         ('JAZZCASH', 'JazzCash'),
         ('EASYPAISA', 'EasyPaisa'),
         ('BINANCE', 'Binance'),
-        ('NAYAPAY', 'Nayapay'),
-        ('SADAPAY', 'Sadapay'),
     ]
-
     device_token = models.CharField(max_length=150, db_index=True)
     amount = models.PositiveIntegerField()
     method = models.CharField(max_length=20, choices=METHOD_CHOICES)
@@ -197,3 +229,14 @@ class WithdrawalRequest(models.Model):
 
     def __str__(self):
         return f"{self.method} Withdrawal ({self.amount} Coins) - {self.status}"
+
+class GameUser(models.Model):
+    username = models.CharField(max_length=50, unique=True)
+    email = models.EmailField(unique=True)
+    device_id = models.CharField(max_length=255)
+    ip_address = models.GenericIPAddressField(null=True)
+    auth_token = models.CharField(max_length=512, unique=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.username} - {self.email}"

@@ -7,6 +7,11 @@ from .views.games import (
     cancel_game_wager,
 )
 
+from .views.auth import (
+    verify_email_login,
+    send_otp,
+)
+
 from .views.profile import (
     update_user_profile,
 )
@@ -36,14 +41,21 @@ from .views.withdrawals import (
     reject_withdrawal_custom,
 )
 
+from .views.gift import (
+    get_spin_status,
+    submit_spin,
+    gift_config_api,
+    gift_claim_api,
+)
+
+from .views.admin_gift import (
+    gift_control_dashboard,
+)
+
 from .views.admin import (
     custom_admin_main_portal,
     custom_admin_settings,
     finance_management_dashboard,
-)
-
-from .views.auth import (
-    create_test_user,
 )
 
 urlpatterns = [
@@ -62,31 +74,23 @@ urlpatterns = [
     # 📱 CLIENT ENDPOINTS — MOBILE APP
     # ==========================================================
 
-    # --------------------------
-    # USER PROFILE
-    # --------------------------
-
-    path(
-        "api/test/create-user/",
-        create_test_user,
-        name="create_test_user",
-    ),
-
-    path(  # YE NAYA ADD KIYA HAI
-        "api/register/",
-        create_test_user,
-        name="api_register",
-    ),
-
     path(
         "api/user/update-profile/",
         update_user_profile,
         name="update_user_profile",
     ),
 
-    # --------------------------
-    # REFERRALS
-    # --------------------------
+    path(
+        "api/auth/verify-email/",
+        verify_email_login,
+        name="verify_email_login",
+    ),
+
+    path(
+        "api/auth/send-otp/",
+        send_otp,
+        name="send_otp",
+    ),
 
     path(
         "api/user/verify-referral/",
@@ -99,10 +103,6 @@ urlpatterns = [
         get_user_referral_code,
         name="get_user_referral_code",
     ),
-
-    # --------------------------
-    # DEPOSIT / WALLET
-    # --------------------------
 
     path(
         "api/deposit/methods/",
@@ -128,14 +128,38 @@ urlpatterns = [
         name="get_transaction_history",
     ),
 
-    # --------------------------
-    # WITHDRAWAL
-    # --------------------------
-
     path(
         "api/withdraw/submit/",
         submit_withdrawal_request,
         name="submit_withdrawal",
+    ),
+
+    # --------------------------
+    # GIFT / LUCKY SPIN
+    # --------------------------
+
+    path(
+        "api/gift/status/",
+        get_spin_status,
+        name="gift_status",
+    ),
+
+    path(
+        "api/gift/spin/",
+        submit_spin,
+        name="gift_spin",
+    ),
+
+    path(
+        "api/gift/config/",
+        gift_config_api,
+        name="gift_config",
+    ),
+
+    path(
+        "api/gift/claim/",
+        gift_claim_api,
+        name="gift_claim",
     ),
 
     # --------------------------
@@ -164,19 +188,11 @@ urlpatterns = [
     # 🛡️ CUSTOM MANAGEMENT ADMIN PORTAL
     # ==========================================================
 
-    # --------------------------
-    # MAIN MANAGEMENT HUB
-    # --------------------------
-
     path(
         "management/",
         custom_admin_main_portal,
         name="custom_admin_main_portal",
     ),
-
-    # --------------------------
-    # DEPOSIT DASHBOARD
-    # --------------------------
 
     path(
         "management/dashboard/deposits/",
@@ -196,10 +212,6 @@ urlpatterns = [
         name="reject_deposit_custom",
     ),
 
-    # --------------------------
-    # WITHDRAWAL DASHBOARD
-    # --------------------------
-
     path(
         "management/dashboard/withdrawals/",
         custom_withdrawal_dashboard,
@@ -218,19 +230,17 @@ urlpatterns = [
         name="reject_withdrawal_custom",
     ),
 
-    # --------------------------
-    # PAYMENT SETTINGS
-    # --------------------------
+    path(
+        "management/dashboard/gift/",
+        gift_control_dashboard,
+        name="gift_control_dashboard",
+    ),
 
     path(
         "management/settings/",
         custom_admin_settings,
         name="custom_admin_settings",
     ),
-
-    # --------------------------
-    # FINANCE DASHBOARD
-    # --------------------------
 
     path(
         "dashboard/finance/",

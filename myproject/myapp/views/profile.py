@@ -6,7 +6,6 @@ from django.views.decorators.csrf import csrf_exempt
 
 from ..models import UserProfileBalance
 
-
 @csrf_exempt
 def update_user_profile(request):
 
@@ -19,11 +18,23 @@ def update_user_profile(request):
         )
 
     try:
-        data = json.loads(request.body)
+        is_multipart = (
+            request.content_type
+            and "multipart" in request.content_type
+        )
 
-        device_token = data.get("device_token")
-        nickname = data.get("nickname")
-        phone = data.get("phone_number")
+        if is_multipart:
+            device_token = request.POST.get("device_token")
+            nickname = request.POST.get("nickname")
+            email = request.POST.get("email")
+            profile_pic_file = request.FILES.get("profile_pic")
+        else:
+            data = json.loads(request.body)
+
+            device_token = data.get("device_token")
+            nickname = data.get("nickname")
+            email = data.get("email")
+            profile_pic_file = None
 
         if not device_token or not nickname:
             return JsonResponse(
@@ -43,21 +54,43 @@ def update_user_profile(request):
             )
 
             profile.nickname = nickname
-            profile.phone_number = phone
 
-            profile.save(
-                update_fields=[
-                    "nickname",
-                    "phone_number",
-                ]
+            if email:
+                if (
+                    UserProfileBalance.objects
+                    .filter(email=email)
+                    .exclude(pk=profile.pk)
+                    .exists()
+                ):
+                    return JsonResponse(
+                        {
+                            "error": "Email already in use"
+                        },
+                        status=400,
+                    )
+                profile.email = email
+
+            if profile_pic_file:
+                profile.profile_pic = profile_pic_file
+
+            profile.save()
+
+        pic_url = None
+
+        if profile.profile_pic:
+            pic_url = request.build_absolute_uri(
+                profile.profile_pic.url
             )
 
-        return JsonResponse({
-            "status": "success",
-            "message": (
-                "Identity verified and saved successfully!"
-            ),
-        })
+        return JsonResponse(
+            {
+                "status": "success",
+                "message": (
+                    "Identity verified and saved successfully!"
+                ),
+                "profile_pic_url": pic_url,
+            }
+        )
 
     except json.JSONDecodeError:
         return JsonResponse(

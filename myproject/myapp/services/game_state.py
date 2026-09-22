@@ -1,16 +1,19 @@
-# myapp/services/game_state.py
-
 from ..consumers import ACTIVE_GAMES
 
+import time
 
 # ==========================================================
 # CREATE / GET GAME STATE
 # ==========================================================
 
 def get_or_create_game_state(
+
     game_id,
+
     is_two_player=True,
+
 ):
+
     """
     Get an existing in-memory game state.
 
@@ -22,14 +25,23 @@ def get_or_create_game_state(
     if game_id not in ACTIVE_GAMES:
 
         player_turn_order = (
+
             ["BLUE", "GREEN"]
+
             if is_two_player
+
             else [
+
                 "BLUE",
+
                 "RED",
+
                 "GREEN",
+
                 "YELLOW",
+
             ]
+
         )
 
         ACTIVE_GAMES[game_id] = {
@@ -43,6 +55,9 @@ def get_or_create_game_state(
 
             "required_players":
                 2 if is_two_player else 4,
+
+            "created_at":
+                time.time(),
 
             # ------------------------------------------------
             # GAME STATUS
@@ -71,6 +86,9 @@ def get_or_create_game_state(
             "player_assignments":
                 {},
 
+            "player_names":
+                {},
+
             # ------------------------------------------------
             # DICE
             # ------------------------------------------------
@@ -87,6 +105,7 @@ def get_or_create_game_state(
 
             "tokens":
                 [],
+
         }
 
         # ----------------------------------------------------
@@ -109,30 +128,41 @@ def get_or_create_game_state(
 
                     "position":
                         -1,
+
                 })
 
         print(
+
             f"🆕 GAME STATE CREATED | "
+
             f"Game={game_id}"
+
         )
 
     return ACTIVE_GAMES[game_id]
-
 
 # ==========================================================
 # ASSIGN PLAYER COLOR
 # ==========================================================
 
 def assign_player_color(
+
     state,
+
     player_token,
+
 ):
+
     """
     Assign the first available color to the player.
+
+    Uses full order, not the normalized one.
     """
 
     assignments = state[
+
         "player_assignments"
+
     ]
 
     # ------------------------------------------------------
@@ -142,30 +172,47 @@ def assign_player_color(
     if player_token in assignments:
 
         return assignments[
+
             player_token
+
         ]
 
     # ------------------------------------------------------
-    # Find available color
+    # Find available color from FULL order
     # ------------------------------------------------------
 
+    if state.get("is_two_player_mode"):
+
+        full_order = ["BLUE", "GREEN"]
+
+    else:
+
+        full_order = ["BLUE", "RED", "GREEN", "YELLOW"]
+
     assigned_colors = set(
+
         assignments.values()
+
     )
 
-    for color in state[
-        "player_turn_order"
-    ]:
+    for color in full_order:
 
         if color not in assigned_colors:
 
             assignments[
+
                 player_token
+
             ] = color
 
             print(
+
                 f"👤 PLAYER JOINED | "
-                f"Color={color}"
+
+                f"Color={color} | "
+
+                f"Token={player_token}"
+
             )
 
             return color
@@ -176,14 +223,16 @@ def assign_player_color(
 
     return None
 
-
 # ==========================================================
 # REMOVE GAME STATE
 # ==========================================================
 
 def remove_game_state(
+
     game_id
+
 ):
+
     """
     Remove an in-memory game room.
     """
@@ -193,7 +242,9 @@ def remove_game_state(
     if game_id in ACTIVE_GAMES:
 
         del ACTIVE_GAMES[
+
             game_id
+
         ]
 
         return True

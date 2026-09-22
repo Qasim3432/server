@@ -10,7 +10,6 @@ from ..services.wager_service import (
     cancel_wager,
 )
 
-
 # ==========================================
 # GAME INITIALIZATION
 # ==========================================
@@ -30,10 +29,16 @@ def initialize_game(request):
         data = json.loads(request.body)
 
         player_token = data.get("player_token")
+        player_name = data.get(
+            "player_name",
+            "Player",
+        )
         is_two_player = data.get(
             "is_two_player_mode",
             True,
         )
+
+        
 
         if not player_token:
             return JsonResponse(
@@ -45,8 +50,11 @@ def initialize_game(request):
                 status=400,
             )
 
+        
+
         result = initialize_game_service(
             player_token=player_token,
+            player_name=player_name,
             is_two_player=is_two_player,
         )
 
@@ -73,7 +81,6 @@ def initialize_game(request):
             },
             status=500,
         )
-
 
 # ==========================================
 # WAGER JOIN
@@ -144,7 +151,6 @@ def join_wager_match(request):
         status=status_code,
     )
 
-
 # ==========================================
 # GAME FINALIZATION
 # ==========================================
@@ -202,7 +208,6 @@ def finalize_game_wager(request):
         result,
         status=status_code,
     )
-
 
 # ==========================================
 # GAME CANCELLATION

@@ -182,7 +182,7 @@ def approve_withdrawal_custom(
     )
 
     result = process_withdrawal_approval(
-        withdrawal
+        withdrawal.id
     )
 
     if (

@@ -5,15 +5,13 @@ from urllib.parse import parse_qs
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
 
-from .services.wager_service import finalize_wager_game
-
+from.services.wager_service import finalize_wager_game
 
 # ==========================================================
 # ACTIVE GAME MEMORY
 # ==========================================================
 
 ACTIVE_GAMES = {}
-
 
 # ==========================================================
 # LUDO BOARD CONFIGURATION
@@ -26,7 +24,6 @@ START_OFFSETS = {
     "YELLOW": 39,
 }
 
-
 SAFE_GLOBAL_CELLS = {
     0,
     8,
@@ -37,7 +34,6 @@ SAFE_GLOBAL_CELLS = {
     39,
     47,
 }
-
 
 # ==========================================================
 # GLOBAL CELL
@@ -51,7 +47,6 @@ def get_global_cell_index(color, position):
     return (
         START_OFFSETS[color] + position
     ) % 52
-
 
 # ==========================================================
 # LUDO WEBSOCKET CONSUMER
@@ -83,11 +78,11 @@ class LudoGameConsumer(
 
         query_string = (
             self.scope
-            .get(
+           .get(
                 "query_string",
                 b""
             )
-            .decode("utf-8")
+           .decode("utf-8")
         )
 
         parsed_params = parse_qs(
@@ -195,6 +190,11 @@ class LudoGameConsumer(
             GREEN
             YELLOW
         """
+
+        # FIX: LOBBY me order ko mat kaato
+        # warna 2nd player ko color nahi milega
+        if state.get("game_status")!= "ACTIVE":
+            return
 
         active_colors = (
             self.get_active_player_colors(
@@ -356,6 +356,60 @@ class LudoGameConsumer(
             winning_device_token=winning_device_token,
         )
 
+        # ======================================================
+    # ENSURE GAME ROOM (PERMANENT FIX)
+    # ======================================================
+
+    @database_sync_to_async
+    def ensure_game_room_exists(
+        self,
+        game_id,
+        state
+    ):
+
+        from .models import (
+            GameRoom,
+            UserProfileBalance,
+        )
+
+        game = (
+            GameRoom.objects
+            .filter(game_id=game_id)
+            .first()
+        )
+
+        if game:
+            return game
+
+        assignments = state.get(
+            "player_assignments",
+            {}
+        )
+
+        bet_amount = int(
+            state.get("bet_amount", 0)
+        )
+
+        game = GameRoom.objects.create(
+            game_id=game_id,
+            bet_amount=bet_amount,
+            game_status="ACTIVE",
+            total_pool_escrow=bet_amount * len(assignments),
+        )
+
+        for device_token in assignments.keys():
+
+            profile = (
+                UserProfileBalance.objects
+                .filter(device_token=device_token)
+                .first()
+            )
+
+            if profile:
+                game.players.add(profile)
+
+        return game
+
     # ======================================================
     # HANDLE WINNER
     # ======================================================
@@ -402,7 +456,11 @@ class LudoGameConsumer(
         # --------------------------------------------------
         # Database payout
         # --------------------------------------------------
-
+           
+        await self.ensure_game_room_exists(
+            self.game_id,
+            state
+        )
         try:
 
             result = await self.payout_winner(
@@ -675,7 +733,7 @@ class LudoGameConsumer(
                 ] = 56
 
             # --------------------------------------------------
-            # Force winner
+            # Force winner - TEST ONLY, no payout
             # --------------------------------------------------
 
             state[
@@ -683,8 +741,15 @@ class LudoGameConsumer(
             ] = "BLUE"
 
             state[
+                "winner_device_token"
+            ] = self.get_device_for_color(
+                state,
+                "BLUE"
+            )
+
+            state[
                 "game_status"
-            ] = "WON"
+            ] = "COMPLETED"
 
             state[
                 "has_rolled"
@@ -693,13 +758,7 @@ class LudoGameConsumer(
             state[
                 "status_text"
             ] = (
-                "BLUE test finish triggered. "
-                "Processing payout..."
-            )
-
-            await self.handle_game_winner(
-                state,
-                "BLUE"
+                "BLUE WON! (TEST)"
             )
 
             await self.broadcast_current_state()
@@ -897,7 +956,7 @@ class LudoGameConsumer(
         # Color verification
         # --------------------------------------------------
 
-        if color != current_player:
+        if color!= current_player:
 
             state[
                 "status_text"
@@ -1014,7 +1073,7 @@ class LudoGameConsumer(
 
                         if (
                             enemy_token["color"]
-                            != color
+                           != color
                             and enemy_token["position"]
                             >= 0
                         ):

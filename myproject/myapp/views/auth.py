@@ -1,26 +1,33 @@
 # views/auth.py
 
 import json
+import hashlib
+import time
 
 from django.conf import settings
 from django.db import transaction
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
+from django.core.mail import send_mail
 
-from ..models import UserProfileBalance
+from..models import UserProfileBalance
+from..models import GameUser
 
+def generate_secure_token(email, device_id, ip):
+    """
+    Token mixture of IP + device + email.
+    """
+    raw = f"{email}:{device_id}:{ip}:{time.time()}"
+    return hashlib.sha256(raw.encode()).hexdigest()
 
 @csrf_exempt
-def create_test_user(request):
+def send_otp(request):
     """
-    DEVELOPMENT / TESTING ONLY.
-
-    Creates or updates a test UserProfileBalance.
-
-    This endpoint is disabled when DEBUG=False.
+    Send OTP to user email for verification.
+    Takes email and code.
     """
 
-    if request.method != "POST":
+    if request.method!= "POST":
         return JsonResponse(
             {
                 "status": "error",
@@ -29,104 +36,178 @@ def create_test_user(request):
             status=405
         )
 
-    if not settings.DEBUG:
+    try:
+        data = json.loads(request.body)
+
+        email = str(
+            data.get("email", "")
+        ).strip().lower()
+
+        code = str(
+            data.get("code", "")
+        ).strip()
+
+        if not email:
+            return JsonResponse(
+                {
+                    "status": "error",
+                    "message": "email is required."
+                },
+                status=400
+            )
+
+        if not code:
+            return JsonResponse(
+                {
+                    "status": "error",
+                    "message": "code is required."
+                },
+                status=400
+            )
+
+        send_mail(
+            'Rocks Games Verification',
+            f'Tumhara verification code hai: {code}',
+            'bedrockentertainent@gmail.com',
+            [email],
+            fail_silently=False,
+        )
+
+        return JsonResponse(
+            {
+                "status": "success",
+                "message": "OTP sent."
+            },
+            status=200
+        )
+
+    except json.JSONDecodeError:
         return JsonResponse(
             {
                 "status": "error",
-                "message": "Test user creation is disabled."
+                "message": "Invalid JSON body."
             },
-            status=403
+            status=400
+        )
+
+    except Exception as e:
+        return JsonResponse(
+            {
+                "status": "error",
+                "message": str(e)
+            },
+            status=500
+        )
+
+@csrf_exempt
+def verify_email_login(request):
+    """
+    Email auth with Gmail verification.
+    Takes email, username, device_id.
+    Creates secure token as mixture of IP + device + email.
+    Stores token in device and backend.
+    """
+
+    if request.method!= "POST":
+        return JsonResponse(
+            {
+                "status": "error",
+                "message": "POST required."
+            },
+            status=405
         )
 
     try:
         data = json.loads(request.body)
 
-        device_token = str(
-            data.get("device_token", "")
+        email = str(
+            data.get("email", "")
+        ).strip().lower()
+
+        username = str(
+            data.get("username", "")
         ).strip()
 
-        nickname = str(
-            data.get("nickname", "Test Player")
+        device_id = str(
+            data.get("device_id", "")
         ).strip()
 
-        phone_number = str(
-            data.get("phone_number", "")
-        ).strip()
-
-        if not device_token:
+        if not email:
             return JsonResponse(
                 {
                     "status": "error",
-                    "message": "device_token is required."
+                    "message": "email is required."
                 },
                 status=400
             )
 
-        if not phone_number:
+        if not username:
             return JsonResponse(
                 {
                     "status": "error",
-                    "message": "phone_number is required."
+                    "message": "username is required."
                 },
                 status=400
             )
 
-        # --------------------------------------------------
-        # Check whether this device already exists
-        # --------------------------------------------------
+        if not device_id:
+            return JsonResponse(
+                {
+                    "status": "error",
+                    "message": "device_id is required."
+                },
+                status=400
+            )
 
-        existing_device = UserProfileBalance.objects.filter(
-            device_token=device_token
+        ip_address = request.META.get("REMOTE_ADDR")
+
+        auth_token = generate_secure_token(
+            email,
+            device_id,
+            ip_address
+        )
+
+        existing_email = GameUser.objects.filter(
+            email=email
         ).first()
 
-        # --------------------------------------------------
-        # Check whether phone belongs to another device
-        # --------------------------------------------------
-
-        existing_phone = UserProfileBalance.objects.filter(
-            phone_number=phone_number
+        existing_device = GameUser.objects.filter(
+            device_id=device_id
         ).first()
 
-        if existing_phone and (
+        if existing_email and (
             not existing_device
-            or existing_phone.id != existing_device.id
+            or existing_email.id!= existing_device.id
         ):
             return JsonResponse(
                 {
                     "status": "error",
-                    "message": "This phone number is already registered.",
-                    "existing_device_token": existing_phone.device_token
+                    "message": "This email is already registered with another device.",
                 },
                 status=409
             )
 
-        # --------------------------------------------------
-        # Create / update profile
-        # --------------------------------------------------
-
         with transaction.atomic():
-
-            profile, created = (
-                UserProfileBalance.objects.get_or_create(
-                    device_token=device_token
-                )
+            user, created = GameUser.objects.update_or_create(
+                email=email,
+                defaults={
+                    "username": username,
+                    "device_id": device_id,
+                    "ip_address": ip_address,
+                    "auth_token": auth_token,
+                }
             )
-
-            profile.nickname = nickname
-            profile.phone_number = phone_number
-            profile.save()
 
         return JsonResponse(
             {
                 "status": "success",
                 "created": created,
                 "user": {
-                    "device_token": profile.device_token,
-                    "nickname": profile.nickname,
-                    "phone_number": profile.phone_number,
-                    "coins": profile.coins,
-                    "locked_coins": profile.locked_coins,
-                    "referral_code": profile.referral_code,
+                    "user_id": user.id,
+                    "username": user.username,
+                    "email": user.email,
+                    "device_id": user.device_id,
+                    "auth_token": user.auth_token,
                 }
             },
             status=201 if created else 200
