@@ -687,3 +687,8 @@ a:hover {
         border-color 0.15s ease,
         color 0.15s ease;
 }
+/* Logo Size Fix */
+.login-logo img {
+    max-height: 120px !important;
+    width: auto !important;
+}

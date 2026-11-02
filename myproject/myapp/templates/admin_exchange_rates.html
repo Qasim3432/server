@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Exchange Rates & Fees — Rocks Games</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Segoe UI', 'Poppins', sans-serif;
+            background: #F5F7FA;
+            color: #1A202C;
+            min-height: 100vh;
+        }
+        .top-bar {
+            background: #1F2937;
+            color: white;
+            padding: 24px 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .top-bar h1 { font-size: 1.5rem; font-weight: 800; letter-spacing: 1px; }
+        .back-btn {
+            color: white;
+            text-decoration: none;
+            background: #374151;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-weight: 600;
+            transition: 0.2s;
+        }
+        .back-btn:hover { background: #4B5563; }
+
+        .container-main {
+            max-width: 1200px;
+            margin: 40px auto;
+            padding: 0 20px;
+        }
+
+        .alert-success {
+            background: #D1FAE5;
+            color: #065F46;
+            padding: 16px;
+            border-radius: 8px;
+            margin-bottom: 24px;
+            font-weight: 600;
+            border: 1px solid #10B981;
+        }
+
+        .grid-3 {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 24px;
+        }
+        @media (max-width: 900px) { .grid-3 { grid-template-columns: 1fr; } }
+
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+            border: 1px solid #E5E7EB;
+        }
+        .card-header {
+            font-size: 1.2rem;
+            font-weight: 700;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: #111827;
+        }
+        .card-header.pk { color: #16A34A; border-bottom: 2px solid #16A34A; padding-bottom: 10px; }
+        .card-header.in { color: #2563EB; border-bottom: 2px solid #2563EB; padding-bottom: 10px; }
+        .card-header.fee { color: #DC2626; border-bottom: 2px solid #DC2626; padding-bottom: 10px; }
+
+        label {
+            display: block;
+            font-weight: 600;
+            color: #4B5563;
+            margin-bottom: 8px;
+            font-size: 0.9rem;
+        }
+        input {
+            width: 100%;
+            padding: 12px;
+            border: 1.5px solid #D1D5DB;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            color: #1F2937;
+            outline: none;
+            transition: border 0.2s;
+        }
+        input:focus { border-color: #3B82F6; }
+
+        .btn-submit {
+            display: block;
+            width: 100%;
+            margin-top: 30px;
+            background: #10B981;
+            color: white;
+            padding: 16px;
+            text-align: center;
+            font-size: 1.1rem;
+            font-weight: 800;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: 0.2s;
+            box-shadow: 0 4px 12px rgba(16,185,129,0.3);
+        }
+        .btn-submit:hover { background: #059669; transform: translateY(-2px); }
+    </style>
+</head>
+<body>
+
+<div class="top-bar">
+    <h1>💱 Exchange Rates & Fees</h1>
+    <a href="/management/" class="back-btn"><i class="fas fa-arrow-left"></i> Back to Portal</a>
+</div>
+
+<div class="container-main">
+
+    {% if messages %}
+        {% for message in messages %}
+            <div class="alert-success">{{ message }}</div>
+        {% endfor %}
+    {% endif %}
+
+    <form method="POST">
+        {% csrf_token %}
+        
+        <div class="grid-3">
+            
+            <!-- Pakistan Card -->
+            <div class="card">
+                <div class="card-header pk">
+                    🇵🇰 Pakistan (PKR Rate)
+                </div>
+                <label>1 USD = ? PKR</label>
+                <input type="number" step="0.01" name="pkr_rate" value="{{ pk_rate }}" required>
+            </div>
+
+            <!-- India Card -->
+            <div class="card">
+                <div class="card-header in">
+                    🇮🇳 India (INR Rate)
+                </div>
+                <label>1 USD = ? INR</label>
+                <input type="number" step="0.01" name="inr_rate" value="{{ in_rate }}" required>
+            </div>
+
+            <!-- Withdrawal Fee Card -->
+            <div class="card">
+                <div class="card-header fee">
+                    💸 Withdrawal Fee (%)
+                </div>
+                <label>Platform Commission (%)</label>
+                <input type="number" step="1" name="withdraw_commission" value="{{ withdraw_commission }}" required>
+            </div>
+
+        </div>
+
+        <button type="submit" class="btn-submit">Save Settings</button>
+    </form>
+
+</div>
+
+</body>
+</html>

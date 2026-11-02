@@ -1,15 +1,10 @@
+# myapp/views/admin.py
+
 from django.contrib import messages
 from django.db.models import Sum
 from django.http import JsonResponse
-from django.shortcuts import (
-    get_object_or_404,
-    redirect,
-    render,
-)
-
-from django.contrib.admin.views.decorators import (
-    staff_member_required,
-)
+from django.shortcuts import get_object_or_404, redirect, render
+from django.contrib.admin.views.decorators import staff_member_required
 
 from ..models import (
     SystemPaymentMethod,
@@ -17,6 +12,8 @@ from ..models import (
     WithdrawalRequest,
     UserProfileBalance,
     SystemConfiguration,
+    SystemTransactionLog,
+    ExchangeRate,
 )
 
 
@@ -49,16 +46,53 @@ def custom_admin_main_portal(request):
         request,
         "admin_main_portal.html",
         {
-            "pending_deposits_count":
-                pending_deposits_count,
-
-            "pending_withdrawals_count":
-                pending_withdrawals_count,
-
-            "active_methods_count":
-                active_methods_count,
+            "pending_deposits_count": pending_deposits_count,
+            "pending_withdrawals_count": pending_withdrawals_count,
+            "active_methods_count": active_methods_count,
         },
     )
+
+
+# ==========================================
+# EXCHANGE RATES & FEES
+# ==========================================
+
+@staff_member_required
+def custom_exchange_rates_view(request):
+    if request.method == "POST":
+        pkr_rate = request.POST.get("pkr_rate")
+        inr_rate = request.POST.get("inr_rate")
+        withdraw_comm = request.POST.get("withdraw_commission")
+
+        pk_obj, _ = ExchangeRate.objects.get_or_create(country='PK')
+        if pkr_rate:
+            pk_obj.usd_to_local_rate = pkr_rate
+            pk_obj.save()
+
+        in_obj, _ = ExchangeRate.objects.get_or_create(country='IN')
+        if inr_rate:
+            in_obj.usd_to_local_rate = inr_rate
+            in_obj.save()
+
+        config = SystemConfiguration.get_solo()
+        if withdraw_comm:
+            config.withdrawal_commission_percentage = int(withdraw_comm)
+            config.save()
+
+        messages.success(request, "Exchange rates and fees updated successfully!")
+        return redirect("custom_exchange_rates")
+
+    pk_obj = ExchangeRate.objects.filter(country='PK').first()
+    in_obj = ExchangeRate.objects.filter(country='IN').first()
+    config = SystemConfiguration.get_solo()
+
+    context = {
+        "pk_rate": pk_obj.usd_to_local_rate if pk_obj else 280.00,
+        "in_rate": in_obj.usd_to_local_rate if in_obj else 84.00,
+        "withdraw_commission": config.withdrawal_commission_percentage,
+    }
+
+    return render(request, "admin_exchange_rates.html", context)
 
 
 # ==========================================
@@ -71,51 +105,36 @@ def custom_admin_settings(request):
     methods = (
         SystemPaymentMethod.objects
         .all()
+        .order_by("country", "method_type")
     )
 
     if request.method == "POST":
 
-        method_id = request.POST.get(
-            "method_id"
-        )
+        method_id = request.POST.get("method_id")
+        method_instance = get_object_or_404(SystemPaymentMethod, id=method_id)
 
-        method_instance = get_object_or_404(
-            SystemPaymentMethod,
-            id=method_id,
-        )
+        method_instance.account_name = request.POST.get("account_name")
+        method_instance.account_number = request.POST.get("account_number")
+        method_instance.is_active = ("is_active" in request.POST)
 
-        method_instance.account_name = (
-            request.POST.get("account_name")
-        )
-
-        method_instance.account_number = (
-            request.POST.get("account_number")
-        )
-
-        method_instance.is_active = (
-            "is_active" in request.POST
-        )
+        country = request.POST.get("country", "").upper().strip()
+        if country in ("PK", "IN", "ALL"):
+            method_instance.country = country
 
         method_instance.save()
 
         messages.success(
             request,
-            (
-                f"Updated details for "
-                f"{method_instance.get_method_type_display()}!"
-            ),
+            f"Updated details for {method_instance.get_method_type_display()} ({method_instance.country})!",
         )
 
-        return redirect(
-            "custom_admin_settings"
-        )
+        return redirect("custom_admin_settings")
 
     return render(
         request,
         "admin_settings.html",
         {
-            "methods":
-                methods
+            "methods": methods
         },
     )
 
@@ -131,217 +150,122 @@ def finance_management_dashboard(request):
 
     if request.method == "POST":
 
-        withdrawal_commission = (
-            request.POST.get(
-                "withdrawal_commission"
-            )
-        )
-
-        platform_tax = (
-            request.POST.get(
-                "platform_tax"
-            )
-        )
-
-        winner_payout = (
-            request.POST.get(
-                "winner_payout"
-            )
-        )
+        withdrawal_commission = request.POST.get("withdrawal_commission")
+        platform_tax = request.POST.get("platform_tax")
+        winner_payout = request.POST.get("winner_payout")
 
         errors = []
 
         try:
+            withdrawal_commission = int(withdrawal_commission)
+            platform_tax = int(platform_tax)
+            winner_payout = int(winner_payout)
 
-            withdrawal_commission = int(
-                withdrawal_commission
-            )
-
-            platform_tax = int(
-                platform_tax
-            )
-
-            winner_payout = int(
-                winner_payout
-            )
-
-            if (
-                platform_tax
-                + winner_payout
-                != 100
-            ):
-
-                errors.append(
-                    "Configuration Check Failed: "
-                    "Platform Tax + Winner Payout "
-                    "shares must sum to exactly 100%."
-                )
+            if platform_tax + winner_payout != 100:
+                errors.append("Configuration Check Failed: Platform Tax + Winner Payout shares must sum to exactly 100%.")
 
             if not 0 <= withdrawal_commission <= 100:
-
-                errors.append(
-                    "Withdrawal commission must "
-                    "be between 0 and 100."
-                )
+                errors.append("Withdrawal commission must be between 0 and 100.")
 
             if not 0 <= platform_tax <= 100:
-
-                errors.append(
-                    "Platform tax must be "
-                    "between 0 and 100."
-                )
+                errors.append("Platform tax must be between 0 and 100.")
 
             if errors:
-
                 for err in errors:
-
-                    messages.error(
-                        request,
-                        err,
-                    )
-
+                    messages.error(request, err)
             else:
-
-                config.withdrawal_commission_percentage = (
-                    withdrawal_commission
-                )
-
-                config.platform_tax_percentage = (
-                    platform_tax
-                )
-
-                config.winner_payout_percentage = (
-                    winner_payout
-                )
-
+                config.withdrawal_commission_percentage = withdrawal_commission
+                config.platform_tax_percentage = platform_tax
+                config.winner_payout_percentage = winner_payout
                 config.save()
+                messages.success(request, "System Matrix parameters applied successfully.")
 
-                messages.success(
-                    request,
-                    (
-                        "System Matrix parameters "
-                        "applied successfully."
-                    ),
-                )
+        except (ValueError, TypeError):
+            messages.error(request, "Invalid entries. Parameters must be integers.")
 
-        except (
-            ValueError,
-            TypeError,
-        ):
-
-            messages.error(
-                request,
-                (
-                    "Invalid entries. Parameters "
-                    "must be integers."
-                ),
-            )
-
-        return redirect(
-            "finance_management_dashboard"
-        )
-
-    # ======================================
-    # BOOKKEEPING
-    # ======================================
+        return redirect("finance_management_dashboard")
 
     total_credited = (
         DepositRequest.objects
         .filter(status="APPROVED")
-        .aggregate(
-            total=Sum("amount")
-        )["total"]
+        .aggregate(total=Sum("amount"))["total"]
         or 0
     )
 
     total_debited = (
         WithdrawalRequest.objects
         .filter(status="APPROVED")
-        .aggregate(
-            total=Sum("amount")
-        )["total"]
+        .aggregate(total=Sum("amount"))["total"]
         or 0
     )
 
     admin_profile = (
         UserProfileBalance.objects
-        .filter(
-            device_token=(
-                "SYSTEM_PLATFORM_ADMIN_LEDGER"
-            )
-        )
+        .filter(device_token="SYSTEM_PLATFORM_ADMIN_LEDGER")
         .first()
     )
 
-    revenue_earned = (
-        admin_profile.coins
-        if admin_profile
-        else 0
-    )
+    revenue_earned = admin_profile.coins if admin_profile else 0
 
     normal_profiles = (
         UserProfileBalance.objects
-        .exclude(
-            device_token=(
-                "SYSTEM_PLATFORM_ADMIN_LEDGER"
-            )
-        )
+        .exclude(device_token="SYSTEM_PLATFORM_ADMIN_LEDGER")
     )
 
     liquid_supply = (
         normal_profiles
-        .aggregate(
-            total=Sum("coins")
-        )["total"]
+        .aggregate(total=Sum("coins"))["total"]
         or 0
     )
 
     locked_escrow = (
         normal_profiles
-        .aggregate(
-            total=Sum("locked_coins")
-        )["total"]
+        .aggregate(total=Sum("locked_coins"))["total"]
         or 0
     )
 
-    total_liability = (
-        liquid_supply
-        + locked_escrow
+    total_liability = liquid_supply + locked_escrow
+
+    # ==========================================================
+    # ✅ FIX (issue #22): issued_bonuses ab actual sum hai
+    #
+    # Pehle hardcoded `format_dollar(0)` tha — finance dashboard
+    # pe "Issued Bonuses: $0.00" hamesha dikhta tha, chahe kitne
+    # bhi bonuses issue ho chuke hon. Ab ledger se sum aata hai.
+    # ==========================================================
+
+    issued_bonuses = (
+        SystemTransactionLog.objects
+        .filter(
+            log_type__in=[
+                "REFERRAL_BONUS",
+                "REFERRAL_INVITE_REWARD",
+                "REFERRAL_COMMISSION",
+                "DAILY_BONUS",
+                "SPIN_REWARD",
+                "DEPOSIT_BONUS",
+                "LEADERBOARD_REWARD",
+            ]
+        )
+        .aggregate(total=Sum("amount"))["total"]
+        or 0
     )
 
+    from ..currency_utils import format_dollar
+
     context = {
-
-        "config":
-            config,
-
+        "config": config,
         "metrics": {
-
-            "total_credited_inflow":
-                total_credited,
-
-            "total_debited_outflow":
-                total_debited,
-
-            "total_revenue_earned":
-                revenue_earned,
-
-            "total_system_liability":
-                total_liability,
+            "total_credited_inflow": format_dollar(total_credited),
+            "total_debited_outflow": format_dollar(total_debited),
+            "total_revenue_earned": format_dollar(revenue_earned),
+            "total_system_liability": format_dollar(total_liability),
         },
-
         "breakdown": {
-
-            "approved_deposits":
-                total_credited,
-
-            "issued_bonuses":
-                0,
-
-            "liquid_supply":
-                liquid_supply,
-
-            "locked_escrow":
-                locked_escrow,
+            "approved_deposits": format_dollar(total_credited),
+            "issued_bonuses": format_dollar(issued_bonuses),
+            "liquid_supply": format_dollar(liquid_supply),
+            "locked_escrow": format_dollar(locked_escrow),
         },
     }
 

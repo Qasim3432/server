@@ -1,22 +1,23 @@
-# myproject/asgi.py
 import os
+import sys
+import asyncio
+
+# ✅ FIX: Windows + Python 3.14 Redis Timeout Issue
+# Ye line check karegi ki OS Windows hai ya Linux
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 from django.core.asgi import get_asgi_application
 
-# 1. Initialize os environment BEFORE importing consumers or routing!
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'myproject.settings')
 django_asgi_app = get_asgi_application()
 
-# 2. Now import Channels components safely
 from channels.routing import ProtocolTypeRouter, URLRouter
 from channels.auth import AuthMiddlewareStack
 import myapp.routing
 
-# 3. This structure separates HTTP from WebSocket traffic cleanly
 application = ProtocolTypeRouter({
-    # Handles standard web pages and restful HTTP traffic
     "http": django_asgi_app,
-    
-    # Handles real-time Android gameplay frames
     "websocket": AuthMiddlewareStack(
         URLRouter(
             myapp.routing.websocket_urlpatterns

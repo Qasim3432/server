@@ -1,0 +1,28 @@
+# Secrets
+.env
+.env.local
+*.env
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Django
+db.sqlite3
+db.sqlite3-journal
+staticfiles/
+media/
+logs/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+Thumbs.db
+.DS_Store

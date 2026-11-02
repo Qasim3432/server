@@ -13,7 +13,11 @@ from .models import (
     SystemSetting,
     ReferralSystem,
     SystemTransactionLog,
+    # SystemConfiguration,  <-- ❌ REMOVED (Ab ye default admin me nahi dikhega)
 )
+
+from .currency_utils import format_dollar  # ✅ Import kiya
+from .services.wager_service import process_withdrawal_approval  # ✅ NEW — approve flow
 
 
 # ==============================================================================
@@ -25,7 +29,7 @@ class DepositRequestAdmin(admin.ModelAdmin):
 
     list_display = (
         'device_token',
-        'amount',
+        'amount_display', # ✅ Formatted to $
         'payment_method',
         'sender_name',
         'status',
@@ -46,6 +50,10 @@ class DepositRequestAdmin(admin.ModelAdmin):
         'approve_deposits',
         'reject_deposits'
     ]
+
+    @admin.display(description="Amount")
+    def amount_display(self, obj):
+        return format_dollar(obj.amount)
 
     def approve_deposits(self, request, queryset):
 
@@ -108,19 +116,14 @@ class DepositRequestAdmin(admin.ModelAdmin):
         )
 
         if total_referrer_rewards > 0:
-
             msg += (
                 f" Referrer rewards paid: "
-                f"{total_referrer_rewards} coins."
+                f"{format_dollar(total_referrer_rewards)}."
             )
 
         self.message_user(request, msg)
 
-    def _pay_referrer_reward(
-        self,
-        referred_profile,
-        deposit_id,
-    ):
+    def _pay_referrer_reward(self, referred_profile, deposit_id):
 
         referral = (
             ReferralSystem.objects
@@ -139,9 +142,7 @@ class DepositRequestAdmin(admin.ModelAdmin):
         if not referral.referrer:
             return 0
 
-        reward = int(
-            referral.referrer_reward_amount or 50
-        )
+        reward = int(referral.referrer_reward_amount or 50)
 
         if reward <= 0:
             return 0
@@ -160,11 +161,9 @@ class DepositRequestAdmin(admin.ModelAdmin):
         referrer.save(update_fields=["coins"])
 
         referral.referrer_reward_paid = True
-
         referral.total_commission_earned = (
             referral.total_commission_earned + reward
         )
-
         referral.save(
             update_fields=[
                 "referrer_reward_paid",
@@ -185,7 +184,7 @@ class DepositRequestAdmin(admin.ModelAdmin):
         print(
             f"💰 REFERRER REWARD PAID (admin) | "
             f"referrer={referrer.device_token} | "
-            f"amount={reward}"
+            f"amount={format_dollar(reward)}"
         )
 
         return reward
@@ -207,7 +206,7 @@ class DepositRequestAdmin(admin.ModelAdmin):
 
 
 # ==============================================================================
-# PAGE 2: ACCOUNT NUMBERS CONFIGURATION
+# PAGE 2: PAYMENT METHOD CONFIGURATION (region-aware)
 # ==============================================================================
 
 @admin.register(SystemPaymentMethod)
@@ -215,20 +214,33 @@ class SystemPaymentMethodAdmin(admin.ModelAdmin):
 
     list_display = (
         'method_type',
+        'country',
         'account_name',
         'account_number',
-        'is_active'
+        'is_active',
+    )
+
+    list_filter = (
+        'country',
+        'is_active',
     )
 
     list_editable = (
+        'country',
         'account_name',
         'account_number',
-        'is_active'
+        'is_active',
+    )
+
+    help_text = (
+        "Country: PK = only Pakistan, IN = only India, ALL = both regions. "
+        "BINANCE and USDT should be ALL. JAZZCASH/EASYPAISA = PK. "
+        "RAZORPAY/PHONEPE = IN."
     )
 
 
 # ==============================================================================
-# USER PROFILE BALANCE  ← IP + GPS
+# USER PROFILE BALANCE — country visible
 # ==============================================================================
 
 @admin.register(UserProfileBalance)
@@ -237,10 +249,16 @@ class UserProfileBalanceAdmin(admin.ModelAdmin):
     list_display = (
         'device_token',
         'nickname',
+        'country',
         'ip_address',
         'location_link',
-        'coins',
-        'locked_coins',
+        'coins_display',        # ✅ Formatted to $
+        'locked_coins_display', # ✅ Formatted to $
+        'created_at',
+    )
+
+    list_filter = (
+        'country',
         'created_at',
     )
 
@@ -251,11 +269,8 @@ class UserProfileBalanceAdmin(admin.ModelAdmin):
         'ip_address',
     )
 
-    list_filter = (
-        'created_at',
-    )
-
     readonly_fields = (
+        'country',
         'ip_address',
         'location_link',
         'location_updated_at',
@@ -266,6 +281,14 @@ class UserProfileBalanceAdmin(admin.ModelAdmin):
     ordering = (
         '-created_at',
     )
+
+    @admin.display(description="Coins Balance")
+    def coins_display(self, obj):
+        return format_dollar(obj.coins)
+
+    @admin.display(description="Locked Coins")
+    def locked_coins_display(self, obj):
+        return format_dollar(obj.locked_coins)
 
     def location_link(self, obj):
 
@@ -294,7 +317,7 @@ class WithdrawalRequestAdmin(admin.ModelAdmin):
 
     list_display = (
         'device_token',
-        'amount',
+        'amount_display', # ✅ Formatted to $
         'method',
         'account_title',
         'account_number',
@@ -312,6 +335,10 @@ class WithdrawalRequestAdmin(admin.ModelAdmin):
         'created_at',
         'updated_at'
     )
+
+    @admin.display(description="Amount")
+    def amount_display(self, obj):
+        return format_dollar(obj.amount)
 
     def get_urls(self):
 
@@ -332,36 +359,42 @@ class WithdrawalRequestAdmin(admin.ModelAdmin):
 
         return custom_urls + urls
 
+    # ==========================================================
+    # ✅ FIX: approve_request
+    #
+    # Pehle yahan sirf status='APPROVED' set hota tha, jisse referrer
+    # ko commission nahi milti thi — Django admin aur custom dashboard
+    # ka behavior different tha.
+    #
+    # Ab custom dashboard wala hi `process_withdrawal_approval` call
+    # karte hain taake referral commission bhi trigger ho.
+    # ==========================================================
+
     def approve_request(self, request, object_id):
 
-        with transaction.atomic():
+        result = process_withdrawal_approval(int(object_id))
 
-            obj = (
-                WithdrawalRequest.objects
-                .select_for_update()
-                .get(pk=object_id)
-            )
-
-            if obj.status != 'PENDING':
-
-                self.message_user(
-                    request,
-                    "Already processed.",
-                    messages.WARNING
-                )
-
-                return redirect(f'../../')
-
-            obj.status = 'APPROVED'
-            obj.save(update_fields=['status'])
-
+        if result["status"] == "success":
             self.message_user(
                 request,
-                "Withdrawal approved successfully!",
-                messages.SUCCESS
+                result["message"],
+                messages.SUCCESS,
+            )
+        else:
+            self.message_user(
+                request,
+                result["message"],
+                messages.ERROR,
             )
 
         return redirect(f'../../')
+
+    # ==========================================================
+    # ✅ FIX: reject_request
+    #
+    # Pehle log_type="WAGER_REFUND" tha (galat). Ab
+    # log_type="WITHDRAWAL_REFUND" (sahi). Saath me safer lookup.
+    # ==========================================================
 
     def reject_request(self, request, object_id):
 
@@ -370,25 +403,22 @@ class WithdrawalRequestAdmin(admin.ModelAdmin):
             obj = (
                 WithdrawalRequest.objects
                 .select_for_update()
-                .get(pk=object_id)
+                .filter(pk=object_id, status='PENDING')
+                .first()
             )
 
-            if obj.status != 'PENDING':
-
+            if not obj:
                 self.message_user(
                     request,
                     "Already processed.",
-                    messages.WARNING
+                    messages.WARNING,
                 )
-
                 return redirect(f'../../')
 
             profile = (
                 UserProfileBalance.objects
                 .select_for_update()
-                .filter(
-                    device_token=obj.device_token
-                )
+                .filter(device_token=obj.device_token)
                 .first()
             )
 
@@ -400,7 +430,7 @@ class WithdrawalRequestAdmin(admin.ModelAdmin):
                 SystemTransactionLog.objects.create(
                     user_profile=profile,
                     amount=obj.amount,
-                    log_type="WAGER_REFUND",
+                    log_type="WITHDRAWAL_REFUND",  # ✅ FIX
                     reference_id=f"WD_REJECT_{obj.id}",
                 )
 
@@ -411,9 +441,9 @@ class WithdrawalRequestAdmin(admin.ModelAdmin):
                 request,
                 (
                     f"Withdrawal rejected. "
-                    f"{obj.amount} coins refunded."
+                    f"{format_dollar(obj.amount)} refunded."
                 ),
-                messages.WARNING
+                messages.WARNING,
             )
 
         return redirect(f'../../')

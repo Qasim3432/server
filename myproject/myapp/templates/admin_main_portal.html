@@ -16,9 +16,6 @@
             flex-direction: column;
         }
 
-        /* ==============================
-           TOP BAR — DARK
-           ============================== */
         .top-bar {
             background: #1F2937;
             color: white;
@@ -33,42 +30,36 @@
             text-transform: uppercase;
         }
 
-        /* ==============================
-           MAIN AREA
-           ============================== */
         .container-main {
             flex: 1;
-            max-width: 1400px;
+            max-width: 1600px; /* Thoda wide kiya 5 cards ke liye */
             margin: 0 auto;
             padding: 50px 20px;
             width: 100%;
         }
 
-        /* ==============================
-           CARD GRID
-           ============================== */
         .cards-grid {
             display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 24px;
+            grid-template-columns: repeat(5, 1fr); /* 5 Columns */
+            gap: 20px;
             justify-content: center;
             align-items: stretch;
         }
-        @media (max-width: 1100px) {
+        @media (max-width: 1300px) {
+            .cards-grid { grid-template-columns: repeat(3, 1fr); }
+        }
+        @media (max-width: 900px) {
             .cards-grid { grid-template-columns: repeat(2, 1fr); }
         }
         @media (max-width: 600px) {
             .cards-grid { grid-template-columns: 1fr; }
         }
 
-        /* ==============================
-           CARD
-           ============================== */
         .card {
             background: white;
             border: 1.5px solid #E5E7EB;
             border-radius: 12px;
-            padding: 32px 24px;
+            padding: 24px 20px;
             text-decoration: none;
             color: inherit;
             display: flex;
@@ -77,7 +68,7 @@
             text-align: center;
             transition: all 0.25s ease;
             box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-            min-height: 340px;
+            min-height: 320px;
         }
         .card:hover {
             transform: translateY(-4px);
@@ -85,34 +76,31 @@
             box-shadow: 0 12px 30px rgba(59,130,246,0.15);
         }
         .card .icon {
-            font-size: 3rem;
-            margin-bottom: 20px;
+            font-size: 2.5rem;
+            margin-bottom: 16px;
             display: block;
             line-height: 1;
         }
         .card h3 {
             color: #111827;
-            font-size: 1.35rem;
+            font-size: 1.15rem;
             font-weight: 700;
-            margin-bottom: 14px;
+            margin-bottom: 12px;
         }
         .card p {
             color: #4B5563;
-            font-size: 0.9rem;
-            line-height: 1.6;
+            font-size: 0.85rem;
+            line-height: 1.5;
             flex: 1;
-            margin-bottom: 20px;
+            margin-bottom: 16px;
         }
 
-        /* ==============================
-           BADGE / BUTTON
-           ============================== */
         .card-badge {
             display: inline-block;
-            padding: 9px 22px;
+            padding: 8px 18px;
             border-radius: 8px;
             font-weight: 700;
-            font-size: 0.85rem;
+            font-size: 0.8rem;
             color: white;
             margin-top: auto;
             transition: 0.2s;
@@ -121,10 +109,8 @@
         .badge-red    { background: #DC2626; }
         .badge-blue   { background: #2563EB; }
         .badge-yellow { background: #EAB308; color: #1F2937; }
+        .badge-purple { background: #8B5CF6; }
 
-        /* ==============================
-           FOOTER
-           ============================== */
         .footer {
             text-align: center;
             padding: 26px 20px;
@@ -136,28 +122,18 @@
 </head>
 <body>
 
-<!-- ============================================== -->
-<!-- TOP BAR -->
-<!-- ============================================== -->
 <div class="top-bar">
     <h1>🎮 Rocks Games Control Center</h1>
 </div>
 
-<!-- ============================================== -->
-<!-- MAIN CARDS -->
-<!-- ============================================== -->
 <div class="container-main">
-
     <div class="cards-grid">
 
         <!-- DEPOSITS -->
         <a href="/management/dashboard/deposits/" class="card">
             <span class="icon">💰</span>
             <h3>Deposit Board</h3>
-            <p>
-                Review incoming payment alert claims and authorize
-                persistent user wallet coin increments manually.
-            </p>
+            <p>Review incoming payment alert claims and authorize persistent user wallet coin increments manually.</p>
             <span class="card-badge badge-green">Deposit Panel</span>
         </a>
 
@@ -165,10 +141,7 @@
         <a href="/management/dashboard/withdrawals/" class="card">
             <span class="icon">💸</span>
             <h3>Withdrawal Board</h3>
-            <p>
-                Authorize player outgoing payout execution sequences
-                and deduct live transaction balance ledgers securely.
-            </p>
+            <p>Authorize player outgoing payout execution sequences and deduct live transaction balance ledgers securely.</p>
             <span class="card-badge badge-red">Withdrawal Panel</span>
         </a>
 
@@ -176,10 +149,7 @@
         <a href="/management/dashboard/rewards/" class="card">
             <span class="icon">🏆</span>
             <h3>Leaderboard Rewards</h3>
-            <p>
-                Distribute weekly and monthly rewards to top ranked
-                players and track full distribution history.
-            </p>
+            <p>Distribute weekly and monthly rewards to top ranked players and track full distribution history.</p>
             <span class="card-badge badge-blue">Rewards Panel</span>
         </a>
 
@@ -187,20 +157,21 @@
         <a href="/management/dashboard/gift/" class="card">
             <span class="icon">🎁</span>
             <h3>Gift Control</h3>
-            <p>
-                Enable or disable daily gift spin and set paid spin
-                cost for players across the platform.
-            </p>
+            <p>Enable or disable daily gift spin and set paid spin cost for players across the platform.</p>
             <span class="card-badge badge-yellow">Gift Settings</span>
         </a>
 
-    </div>
+        <!-- ✅ NAYA: EXCHANGE RATES & FEES -->
+        <a href="/management/exchange-rates/" class="card">
+            <span class="icon">💱</span>
+            <h3>Exchange & Fees</h3>
+            <p>Set India & Pakistan live currency rates, USDT configuration, and withdrawal processing commission fees.</p>
+            <span class="card-badge badge-purple">Update Rates</span>
+        </a>
 
+    </div>
 </div>
 
-<!-- ============================================== -->
-<!-- FOOTER -->
-<!-- ============================================== -->
 <div class="footer">
     Secure Backend Management Portal Core Engine
 </div>

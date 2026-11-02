@@ -1,0 +1,11 @@
+Django>=5.0
+channels>=4.0
+channels-redis>=4.2
+daphne>=4.1
+psycopg[binary]>=3.1
+django-ratelimit>=4.1
+python-dotenv>=1.0
+whitenoise>=6.6
+django-jazzmin>=2.6
+redis>=5.0
+agora-token-builder==1.0.5

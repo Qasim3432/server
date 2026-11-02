@@ -19,10 +19,13 @@ from django.utils import timezone
 from ..models import (
     GameHistory,
     LeaderboardReward,
+    LeaderboardRewardClaim,
     SystemSetting,
     SystemTransactionLog,
     UserProfileBalance,
 )
+
+from ..currency_utils import format_dollar
 
 
 # ==========================================================
@@ -36,9 +39,9 @@ def _get_reward_amount(rank, period_type):
     """
 
     if period_type == "weekly":
+        defaults = {1: 1000, 2: 500, 3: 250}
+    else:  # monthly
         defaults = {1: 5000, 2: 3000, 3: 1000}
-    else:
-        defaults = {1: 20000, 2: 10000, 3: 5000}
 
     key = f"{period_type}_reward_{rank}"
 
@@ -49,78 +52,123 @@ def _get_reward_amount(rank, period_type):
                 str(defaults[rank]),
             )
         )
-    except (ValueError, TypeError):
-        return defaults[rank]
+    except (ValueError, TypeError, KeyError):
+        return defaults.get(rank, 0)
 
 
-def _get_current_period(period_type):
-    """
-    Returns (period_key, period_start, period_end)
-    for the CURRENT period.
-    """
+def _local_now():
+    return timezone.localtime(timezone.now())
 
-    now = timezone.now()
+
+# ==========================================================
+# PREVIOUS PERIOD — This is what we distribute
+#
+# ✅ FIX (issue #9): Admin can no longer distribute the CURRENT
+# period mid-week. Distribution only targets COMPLETED periods.
+# ==========================================================
+
+def _get_previous_period(period_type):
+    now = _local_now()
 
     if period_type == "weekly":
-
-        iso = now.isocalendar()
-
-        period_key = f"{iso.year}-W{iso.week:02d}"
-
-        # Monday of current week
-        period_start = (
+        current_week_start = (
             now - timedelta(days=now.weekday())
         ).replace(
-            hour=0,
-            minute=0,
-            second=0,
-            microsecond=0,
+            hour=0, minute=0, second=0, microsecond=0,
         )
+        period_start = current_week_start - timedelta(days=7)
+        period_end = current_week_start
 
-        period_end = now
+        iso = period_start.isocalendar()
+        period_key = f"{iso.year}-W{iso.week:02d}"
 
     else:  # monthly
-
-        period_key = f"{now.year}-{now.month:02d}"
-
-        period_start = now.replace(
-            day=1,
-            hour=0,
-            minute=0,
-            second=0,
-            microsecond=0,
+        current_month_start = now.replace(
+            day=1, hour=0, minute=0, second=0, microsecond=0,
         )
+        if current_month_start.month == 1:
+            period_start = current_month_start.replace(
+                year=current_month_start.year - 1,
+                month=12,
+            )
+        else:
+            period_start = current_month_start.replace(
+                month=current_month_start.month - 1,
+            )
+        period_end = current_month_start
 
-        period_end = now
+        period_key = f"{period_start.year}-{period_start.month:02d}"
 
     return period_key, period_start, period_end
 
 
+# ==========================================================
+# CURRENT PERIOD — For preview only
+# ==========================================================
+
+def _get_current_period(period_type):
+    now = _local_now()
+
+    if period_type == "weekly":
+        iso = now.isocalendar()
+        period_key = f"{iso.year}-W{iso.week:02d}"
+        period_start = (
+            now - timedelta(days=now.weekday())
+        ).replace(
+            hour=0, minute=0, second=0, microsecond=0,
+        )
+        period_end = (
+            period_start + timedelta(days=7)
+        ).replace(
+            hour=0, minute=0, second=0, microsecond=0,
+        )
+    else:
+        period_key = f"{now.year}-{now.month:02d}"
+        period_start = now.replace(
+            day=1, hour=0, minute=0, second=0, microsecond=0,
+        )
+        if now.month == 12:
+            period_end = now.replace(
+                year=now.year + 1, month=1, day=1,
+                hour=0, minute=0, second=0, microsecond=0,
+            )
+        else:
+            period_end = now.replace(
+                month=now.month + 1, day=1,
+                hour=0, minute=0, second=0, microsecond=0,
+            )
+
+    return period_key, period_start, period_end
+
+
+# ==========================================================
+# TOP PLAYERS
+#
+# ✅ FIX (issue #9): Same tiebreak ordering as leaderboard.py
+# so displayed rank matches distribution rank.
+# ==========================================================
+
+_TOP_ORDER = ("-wins", "-earnings", "-games", "user_profile__device_token")
+
+
 def _get_top_players(period_start, period_end, limit=3):
-    """
-    Return top N players in the given date range.
-    """
 
     qs = GameHistory.objects.filter(
         played_at__gte=period_start,
-        played_at__lte=period_end,
+        played_at__lt=period_end,
     )
 
     agg = (
         qs.values("user_profile__device_token")
         .annotate(
             games=Count("id"),
-            wins=Count(
-                "id",
-                filter=Q(result="WON"),
-            ),
+            wins=Count("id", filter=Q(result="WON")),
             earnings=Sum("coins_change"),
         )
         .filter(games__gt=0)
-        .order_by("-wins", "-earnings")[:limit]
+        .order_by(*_TOP_ORDER)[:limit]
     )
 
-    # Fetch profiles
     tokens = [
         row["user_profile__device_token"]
         for row in agg
@@ -138,7 +186,6 @@ def _get_top_players(period_start, period_end, limit=3):
     for idx, row in enumerate(agg):
 
         token = row["user_profile__device_token"]
-
         profile = profiles.get(token)
 
         results.append({
@@ -151,7 +198,7 @@ def _get_top_players(period_start, period_end, limit=3):
             ),
             "wins": row["wins"] or 0,
             "games": row["games"] or 0,
-            "earnings": row["earnings"] or 0,
+            "earnings": format_dollar(row["earnings"] or 0),
             "profile_obj": profile,
         })
 
@@ -167,60 +214,93 @@ def _already_distributed(period_key):
 
 
 # ==========================================================
-# DASHBOARD
+# DASHBOARD — Shows PREVIOUS (distributable) period
+# + CURRENT (preview) period
 # ==========================================================
 
 @staff_member_required
 def leaderboard_rewards_dashboard(request):
 
     # ----------------------------------------------
-    # Weekly preview
+    # PREVIOUS week — distributable
     # ----------------------------------------------
 
-    week_key, week_start, week_end = (
-        _get_current_period("weekly")
+    prev_week_key, prev_week_start, prev_week_end = (
+        _get_previous_period("weekly")
     )
 
-    weekly_top = _get_top_players(
-        week_start,
-        week_end,
+    prev_week_top = _get_top_players(
+        prev_week_start,
+        prev_week_end,
     )
 
-    weekly_prizes = {
+    prev_week_prizes_raw = {
         1: _get_reward_amount(1, "weekly"),
         2: _get_reward_amount(2, "weekly"),
         3: _get_reward_amount(3, "weekly"),
     }
 
-    weekly_total = sum(weekly_prizes.values())
+    prev_week_prizes = {
+        k: format_dollar(v) for k, v in prev_week_prizes_raw.items()
+    }
 
-    weekly_distributed = _already_distributed(
-        week_key
+    prev_week_total_raw = sum(prev_week_prizes_raw.values())
+    prev_week_total = format_dollar(prev_week_total_raw)
+
+    prev_week_distributed = _already_distributed(prev_week_key)
+
+    # ----------------------------------------------
+    # CURRENT week — preview only (not distributable)
+    # ----------------------------------------------
+
+    cur_week_key, cur_week_start, cur_week_end = (
+        _get_current_period("weekly")
+    )
+
+    cur_week_top = _get_top_players(
+        cur_week_start,
+        cur_week_end,
     )
 
     # ----------------------------------------------
-    # Monthly preview
+    # PREVIOUS month — distributable
     # ----------------------------------------------
 
-    month_key, month_start, month_end = (
-        _get_current_period("monthly")
+    prev_month_key, prev_month_start, prev_month_end = (
+        _get_previous_period("monthly")
     )
 
-    monthly_top = _get_top_players(
-        month_start,
-        month_end,
+    prev_month_top = _get_top_players(
+        prev_month_start,
+        prev_month_end,
     )
 
-    monthly_prizes = {
+    prev_month_prizes_raw = {
         1: _get_reward_amount(1, "monthly"),
         2: _get_reward_amount(2, "monthly"),
         3: _get_reward_amount(3, "monthly"),
     }
 
-    monthly_total = sum(monthly_prizes.values())
+    prev_month_prizes = {
+        k: format_dollar(v) for k, v in prev_month_prizes_raw.items()
+    }
 
-    monthly_distributed = _already_distributed(
-        month_key
+    prev_month_total_raw = sum(prev_month_prizes_raw.values())
+    prev_month_total = format_dollar(prev_month_total_raw)
+
+    prev_month_distributed = _already_distributed(prev_month_key)
+
+    # ----------------------------------------------
+    # CURRENT month — preview only
+    # ----------------------------------------------
+
+    cur_month_key, cur_month_start, cur_month_end = (
+        _get_current_period("monthly")
+    )
+
+    cur_month_top = _get_top_players(
+        cur_month_start,
+        cur_month_end,
     )
 
     # ----------------------------------------------
@@ -240,9 +320,7 @@ def leaderboard_rewards_dashboard(request):
         winners = []
 
         try:
-            winners = json.loads(
-                h.winners_json or "[]"
-            )
+            winners = json.loads(h.winners_json or "[]")
         except Exception:
             pass
 
@@ -252,30 +330,46 @@ def leaderboard_rewards_dashboard(request):
             "distributed_at": h.distributed_at.strftime(
                 "%d %b %Y, %I:%M %p"
             ),
-            "total_amount": h.total_amount,
+            "total_amount": format_dollar(h.total_amount),
             "winners": winners,
         })
 
     context = {
 
+        # ✅ Previous period — distributable
         "weekly": {
-            "period_key": week_key,
-            "period_start": week_start.strftime("%d %b %Y"),
-            "period_end": week_end.strftime("%d %b %Y"),
-            "top_players": weekly_top,
-            "prizes": weekly_prizes,
-            "total": weekly_total,
-            "already_distributed": weekly_distributed,
+            "period_key": prev_week_key,
+            "period_start": prev_week_start.strftime("%d %b %Y"),
+            "period_end": prev_week_end.strftime("%d %b %Y"),
+            "top_players": prev_week_top,
+            "prizes": prev_week_prizes,
+            "total": prev_week_total,
+            "already_distributed": prev_week_distributed,
+        },
+
+        # ✅ Current period — preview only
+        "weekly_current": {
+            "period_key": cur_week_key,
+            "period_start": cur_week_start.strftime("%d %b %Y"),
+            "period_end": cur_week_end.strftime("%d %b %Y"),
+            "top_players": cur_week_top,
         },
 
         "monthly": {
-            "period_key": month_key,
-            "period_start": month_start.strftime("%d %b %Y"),
-            "period_end": month_end.strftime("%d %b %Y"),
-            "top_players": monthly_top,
-            "prizes": monthly_prizes,
-            "total": monthly_total,
-            "already_distributed": monthly_distributed,
+            "period_key": prev_month_key,
+            "period_start": prev_month_start.strftime("%d %b %Y"),
+            "period_end": prev_month_end.strftime("%d %b %Y"),
+            "top_players": prev_month_top,
+            "prizes": prev_month_prizes,
+            "total": prev_month_total,
+            "already_distributed": prev_month_distributed,
+        },
+
+        "monthly_current": {
+            "period_key": cur_month_key,
+            "period_start": cur_month_start.strftime("%d %b %Y"),
+            "period_end": cur_month_end.strftime("%d %b %Y"),
+            "top_players": cur_month_top,
         },
 
         "history": history_list,
@@ -294,7 +388,6 @@ def leaderboard_rewards_dashboard(request):
 
 @staff_member_required
 def distribute_weekly_rewards(request):
-
     return _distribute(request, "weekly")
 
 
@@ -304,28 +397,24 @@ def distribute_weekly_rewards(request):
 
 @staff_member_required
 def distribute_monthly_rewards(request):
-
     return _distribute(request, "monthly")
 
 
 # ==========================================================
-# CORE DISTRIBUTION
+# CORE DISTRIBUTION — PREVIOUS period only
 # ==========================================================
 
 def _distribute(request, period_type):
 
     if request.method != "POST":
+        return redirect("leaderboard_rewards_dashboard")
 
-        return redirect(
-            "leaderboard_rewards_dashboard"
-        )
-
+    # ✅ FIX: distribute PREVIOUS period (already ended)
     period_key, period_start, period_end = (
-        _get_current_period(period_type)
+        _get_previous_period(period_type)
     )
 
     if _already_distributed(period_key):
-
         messages.warning(
             request,
             (
@@ -333,10 +422,7 @@ def _distribute(request, period_type):
                 f"have already been distributed."
             ),
         )
-
-        return redirect(
-            "leaderboard_rewards_dashboard"
-        )
+        return redirect("leaderboard_rewards_dashboard")
 
     top_players = _get_top_players(
         period_start,
@@ -345,22 +431,14 @@ def _distribute(request, period_type):
     )
 
     if not top_players:
-
         messages.error(
             request,
             (
-                f"No players found for "
-                f"{period_key}. Nothing to distribute."
+                f"No players found for {period_key}. "
+                f"Nothing to distribute."
             ),
         )
-
-        return redirect(
-            "leaderboard_rewards_dashboard"
-        )
-
-    # ----------------------------------------------
-    # Compute prizes
-    # ----------------------------------------------
+        return redirect("leaderboard_rewards_dashboard")
 
     prizes = {
         1: _get_reward_amount(1, period_type),
@@ -368,8 +446,7 @@ def _distribute(request, period_type):
         3: _get_reward_amount(3, period_type),
     }
 
-    total_distributed = 0
-
+    total_pending = 0
     winners_snapshot = []
 
     with transaction.atomic():
@@ -377,7 +454,6 @@ def _distribute(request, period_type):
         for player in top_players:
 
             rank = player["rank"]
-
             reward = prizes.get(rank, 0)
 
             if reward <= 0:
@@ -386,52 +462,53 @@ def _distribute(request, period_type):
             profile = (
                 UserProfileBalance.objects
                 .select_for_update()
-                .filter(
-                    id=player["profile_obj"].id
-                )
+                .filter(id=player["profile_obj"].id)
                 .first()
             )
 
             if not profile:
                 continue
 
-            # Credit coins
-            profile.coins += reward
-            profile.save(update_fields=["coins"])
-
-            # Ledger entry
-            SystemTransactionLog.objects.create(
-                user_profile=profile,
-                amount=reward,
-                log_type="LEADERBOARD_REWARD",
-                reference_id=(
-                    f"{period_type.upper()}_"
-                    f"{period_key}_"
-                    f"RANK_{rank}"
-                ),
+            claim, created = (
+                LeaderboardRewardClaim.objects
+                .get_or_create(
+                    user_profile=profile,
+                    period_key=period_key,
+                    defaults={
+                        "amount": reward,
+                        "rank": rank,
+                        "period_type": period_type,
+                        "is_claimed": False,
+                    },
+                )
             )
 
-            total_distributed += reward
+            if not created:
+                print(
+                    f"⚠️ CLAIM EXISTS | "
+                    f"{period_type} {period_key} | "
+                    f"Rank #{rank} | {profile.device_token}"
+                )
+                continue
+
+            total_pending += reward
 
             winners_snapshot.append({
                 "rank": rank,
                 "device_token": profile.device_token,
                 "name": player["name"],
                 "wins": player["wins"],
-                "reward": reward,
+                "reward": format_dollar(reward),
+                "claim_id": claim.id,
             })
 
             print(
-                f"🏆 REWARD PAID | "
+                f"🎁 CLAIM CREATED | "
                 f"{period_type} {period_key} | "
                 f"Rank #{rank} | "
                 f"{profile.device_token} | "
-                f"+{reward}"
+                f"+{format_dollar(reward)} (pending)"
             )
-
-        # ----------------------------------------------
-        # Save distribution record
-        # ----------------------------------------------
 
         LeaderboardReward.objects.create(
             period_type=period_type,
@@ -439,22 +516,19 @@ def _distribute(request, period_type):
             period_start=period_start,
             period_end=period_end,
             distributed_by=request.user.username,
-            total_amount=total_distributed,
-            winners_json=json.dumps(
-                winners_snapshot
-            ),
+            total_amount=total_pending,
+            winners_json=json.dumps(winners_snapshot),
         )
 
     messages.success(
         request,
         (
-            f"✅ {period_type.title()} rewards "
-            f"distributed for {period_key}. "
-            f"Total: {total_distributed} coins "
-            f"to {len(winners_snapshot)} players."
+            f"✅ {period_type.title()} reward claims "
+            f"created for {period_key}. "
+            f"Total: {format_dollar(total_pending)} pending "
+            f"for {len(winners_snapshot)} players. "
+            f"Users will collect manually."
         ),
     )
 
-    return redirect(
-        "leaderboard_rewards_dashboard"
-    )
+    return redirect("leaderboard_rewards_dashboard")

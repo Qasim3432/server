@@ -1,16 +1,57 @@
 # myapp/services/wager_service.py
 
-from django.db import transaction
+import logging
+import time
 
+from django.db import transaction, OperationalError
 from ..models import (
-    GameRoom,
-    GameHistory,
-    UserProfileBalance,
-    SystemTransactionLog,
-    ReferralSystem,
-    SystemConfiguration,
-    WithdrawalRequest,
+    GameRoom, GameHistory, UserProfileBalance, 
+    SystemTransactionLog, ReferralSystem, 
+    SystemConfiguration, WithdrawalRequest,
 )
+from ..currency_utils import format_dollar
+
+logger = logging.getLogger("myapp.services.wager_service")
+
+
+# ==========================================================
+# RETRY HELPER — database is locked
+#
+# SQLite serializes writers. When two players join
+# simultaneously, one gets "database is locked".
+# Retry with exponential backoff.
+# ==========================================================
+
+DB_LOCK_MAX_RETRIES = 5
+DB_LOCK_BASE_DELAY = 0.15
+
+
+def _is_db_lock_error(exc):
+    return "database is locked" in str(exc).lower()
+
+
+def _retry_on_db_lock(fn, *args, **kwargs):
+    last_error = None
+    for attempt in range(DB_LOCK_MAX_RETRIES):
+        try:
+            return fn(*args, **kwargs)
+        except OperationalError as exc:
+            if not _is_db_lock_error(exc):
+                raise
+            last_error = exc
+            delay = DB_LOCK_BASE_DELAY * (attempt + 1)
+            logger.warning(
+                "DB LOCK retry %s/%s | %s | waiting %.2fs",
+                attempt + 1,
+                DB_LOCK_MAX_RETRIES,
+                fn.__name__,
+                delay,
+            )
+            time.sleep(delay)
+    logger.error(
+        "DB LOCK max retries exhausted | %s", fn.__name__,
+    )
+    raise last_error
 
 
 # ==========================================================
@@ -19,26 +60,16 @@ from ..models import (
 
 def _release_locked_for_game(game):
 
-    for player in (
-        game.players
-        .select_for_update()
-        .all()
-    ):
+    for player in game.players.select_for_update().all():
 
-        release_amount = min(
-            player.locked_coins,
-            game.bet_amount,
-        )
+        release_amount = min(player.locked_coins, game.bet_amount)
 
         if release_amount <= 0:
             continue
 
         player.locked_coins -= release_amount
         player.coins += release_amount
-
-        player.save(
-            update_fields=["coins", "locked_coins"]
-        )
+        player.save(update_fields=["coins", "locked_coins"])
 
         SystemTransactionLog.objects.create(
             user_profile=player,
@@ -49,37 +80,33 @@ def _release_locked_for_game(game):
 
     game.game_status = "CANCELLED"
     game.total_pool_escrow = 0
-
-    game.save(
-        update_fields=["game_status", "total_pool_escrow"]
-    )
+    game.save(update_fields=["game_status", "total_pool_escrow"])
 
     try:
-        from ..consumers import ACTIVE_GAMES
-        ACTIVE_GAMES.pop(str(game.game_id), None)
+        from . import game_state_store as gss
+        gss.delete_state(str(game.game_id))
     except Exception:
         pass
 
 
-def _cancel_prior_active_games(
-    device_token,
-    exclude_game_id=None,
-):
+def _cancel_prior_active_games(device_token, exclude_game_id=None):
 
-    queryset = (
-        GameRoom.objects
-        .select_for_update()
-        .filter(
-            players__device_token=device_token,
-            game_status="ACTIVE",
-        )
-        .distinct()
-    )
+    id_queryset = GameRoom.objects.filter(
+        players__device_token=device_token,
+        game_status="ACTIVE",
+    ).distinct()
 
     if exclude_game_id:
-        queryset = queryset.exclude(game_id=exclude_game_id)
+        id_queryset = id_queryset.exclude(game_id=exclude_game_id)
 
-    prior_games = list(queryset)
+    game_ids = list(id_queryset.values_list("id", flat=True))
+
+    if not game_ids:
+        return 0
+
+    prior_games = list(
+        GameRoom.objects.select_for_update().filter(id__in=game_ids)
+    )
 
     for prior in prior_games:
         _release_locked_for_game(prior)
@@ -87,46 +114,31 @@ def _cancel_prior_active_games(
     return len(prior_games)
 
 
-# ==========================================================
-# HELPERS — DETERMINE MAX PLAYERS
-# ==========================================================
-
-def _determine_max_players(
-    game_id,
-    existing_game=None,
-):
-
+def _determine_max_players(game_id, existing_game=None):
     try:
-        from ..consumers import ACTIVE_GAMES
-        state = ACTIVE_GAMES.get(str(game_id))
-
+        from . import game_state_store as gss
+        state = gss.get_state(str(game_id))
         if state:
-            is_two_player = state.get("is_two_player_mode", True)
-            return 2 if is_two_player else 4
+            return 2 if state.get("is_two_player_mode", True) else 4
     except Exception:
         pass
-
     if existing_game is not None:
         return existing_game.max_players
-
     return 2
 
-
-# ==========================================================
-# HELPERS — RECORD GAME HISTORY
-# ==========================================================
 
 def _record_game_history(
     game,
     participants,
     winning_device_token,
     cancelled=False,
+    surrendered_tokens=None,
 ):
 
+    surrendered_tokens = set(surrendered_tokens or [])
+
     player_count = len(participants)
-
     game_mode = "4P" if player_count >= 3 else "2P"
-
     opponent_count = max(1, player_count - 1)
 
     for player in participants:
@@ -134,6 +146,10 @@ def _record_game_history(
         if cancelled:
             result = "CANCELLED"
             coins_change = 0
+
+        elif player.device_token in surrendered_tokens:
+            result = "SURRENDERED"
+            coins_change = -game.bet_amount
 
         elif player.device_token == winning_device_token:
             result = "WON"
@@ -153,22 +169,14 @@ def _record_game_history(
             opponent_count=opponent_count,
         )
 
-    print(
-        f"📜 GAME HISTORY | Game={game.game_id} | "
-        f"Mode={game_mode} | Players={player_count} | "
-        f"Cancelled={cancelled}"
-    )
-
 
 # ==========================================================
 # WAGER JOIN SERVICE
+#
+# ✅ Wrapped in _retry_on_db_lock → handles SQLite locks
 # ==========================================================
 
-def join_wager(
-    device_token,
-    game_id,
-    bet_amount,
-):
+def _join_wager_impl(device_token, game_id, bet_amount):
 
     with transaction.atomic():
 
@@ -211,8 +219,8 @@ def join_wager(
                 "status": "error",
                 "message": (
                     f"Insufficient funds. "
-                    f"Required: {bet_amount}, "
-                    f"Available: {profile.coins}"
+                    f"Required: {format_dollar(bet_amount)}, "
+                    f"Available: {format_dollar(profile.coins)}."
                 ),
             }
 
@@ -237,7 +245,6 @@ def join_wager(
                 game_id=game_id,
                 existing_game=game,
             )
-
             if state_max != game.max_players:
                 game.max_players = state_max
                 game.save(update_fields=["max_players"])
@@ -253,13 +260,9 @@ def join_wager(
                 "status": "error",
                 "message": (
                     f"Incorrect bet amount. "
-                    f"This room requires {game.bet_amount} coins."
+                    f"This room requires {format_dollar(game.bet_amount)}."
                 ),
             }
-
-        # ==============================================
-        # STALE PLAYER CHECK
-        # ==============================================
 
         existing_player = game.players.filter(
             device_token=device_token
@@ -269,16 +272,31 @@ def join_wager(
 
             if game.game_status == "LOBBY":
 
-                game.players.remove(existing_player)
-
-                print(
-                    f"🧹 REMOVED stale player | "
-                    f"Game={game_id} | "
-                    f"Player={device_token}"
+                release_amount = min(
+                    existing_player.locked_coins,
+                    game.bet_amount,
                 )
 
-            else:
+                if release_amount > 0:
+                    existing_player.locked_coins -= release_amount
+                    existing_player.coins += release_amount
+                    existing_player.save(
+                        update_fields=["coins", "locked_coins"]
+                    )
+                    SystemTransactionLog.objects.create(
+                        user_profile=existing_player,
+                        amount=release_amount,
+                        log_type="WAGER_REFUND",
+                        reference_id=f"REJOIN_{game_id}",
+                    )
 
+                game.players.remove(existing_player)
+                game.total_pool_escrow = max(
+                    0, game.total_pool_escrow - release_amount
+                )
+                profile.refresh_from_db()
+
+            else:
                 return {
                     "status": "error",
                     "message": "Player has already joined this game.",
@@ -292,7 +310,6 @@ def join_wager(
 
         profile.coins -= bet_amount
         profile.locked_coins += bet_amount
-
         profile.save(update_fields=["coins", "locked_coins"])
 
         SystemTransactionLog.objects.create(
@@ -314,7 +331,6 @@ def join_wager(
             game.service_fee_cut = int(
                 (game.total_pool_escrow * config.platform_tax_percentage) / 100
             )
-
             game.winner_payout = (
                 game.total_pool_escrow - game.service_fee_cut
             )
@@ -336,14 +352,21 @@ def join_wager(
         }
 
 
+def join_wager(device_token, game_id, bet_amount):
+
+    return _retry_on_db_lock(
+        _join_wager_impl,
+        device_token,
+        game_id,
+        bet_amount,
+    )
+
+
 # ==========================================================
-# GAME WINNER PAYOUT
+# FINALIZE
 # ==========================================================
 
-def finalize_wager_game(
-    game_id,
-    winning_device_token,
-):
+def _finalize_impl(game_id, winning_device_token, surrendered_tokens=None):
 
     with transaction.atomic():
 
@@ -360,11 +383,7 @@ def finalize_wager_game(
         if game.game_status != "ACTIVE":
             return {
                 "status": "error",
-                "message": (
-                    "Game has already been processed "
-                    "or is not active. Current status: "
-                    f"{game.game_status}"
-                ),
+                "message": f"Game status is {game.game_status}",
             }
 
         if not winning_device_token:
@@ -383,44 +402,33 @@ def finalize_wager_game(
         if not winner:
             return {
                 "status": "error",
-                "message": "Winning player is not a participant of this game.",
+                "message": "Winning player is not a participant.",
             }
 
         winner_payout = int(game.winner_payout or 0)
         service_fee = int(game.service_fee_cut or 0)
         total_pool = int(game.total_pool_escrow or 0)
 
-        if winner_payout < 0:
-            return {"status": "error", "message": "Invalid winner payout."}
-
-        if service_fee < 0:
-            return {"status": "error", "message": "Invalid platform fee."}
-
         if winner_payout + service_fee != total_pool:
             return {
                 "status": "error",
-                "message": (
-                    f"Payout calculation mismatch. "
-                    f"Pool={total_pool}, Winner payout="
-                    f"{winner_payout}, Platform fee="
-                    f"{service_fee}"
-                ),
+                "message": "Payout calculation mismatch.",
             }
 
-        participants = list(
-            game.players.select_for_update().all()
-        )
+        participants = list(game.players.select_for_update().all())
 
         if not participants:
-            return {"status": "error", "message": "Game has no participants."}
+            return {
+                "status": "error",
+                "message": "Game has no participants.",
+            }
 
         for player in participants:
             if player.locked_coins < game.bet_amount:
                 return {
                     "status": "error",
                     "message": (
-                        f"Invalid locked balance for "
-                        f"player {player.device_token}."
+                        f"Invalid locked balance for {player.device_token}."
                     ),
                 }
 
@@ -428,12 +436,9 @@ def finalize_wager_game(
         game.save(update_fields=["game_status"])
 
         for player in participants:
-
             player.locked_coins -= game.bet_amount
-
             if player.device_token == winning_device_token:
                 player.coins += winner_payout
-
             player.save(update_fields=["coins", "locked_coins"])
 
         SystemTransactionLog.objects.create(
@@ -446,11 +451,8 @@ def finalize_wager_game(
         admin_profile, _ = (
             UserProfileBalance.objects
             .select_for_update()
-            .get_or_create(
-                device_token="SYSTEM_PLATFORM_ADMIN_LEDGER"
-            )
+            .get_or_create(device_token="SYSTEM_PLATFORM_ADMIN_LEDGER")
         )
-
         admin_profile.coins += service_fee
         admin_profile.save(update_fields=["coins"])
 
@@ -459,11 +461,12 @@ def finalize_wager_game(
             participants=participants,
             winning_device_token=winning_device_token,
             cancelled=False,
+            surrendered_tokens=surrendered_tokens,
         )
 
         return {
             "status": "success",
-            "message": "Game payout completed successfully.",
+            "message": "Payout completed.",
             "game_id": str(game.game_id),
             "winner": winning_device_token,
             "winner_payout": winner_payout,
@@ -472,22 +475,29 @@ def finalize_wager_game(
         }
 
 
-# ==========================================================
-# BACKWARD-COMPAT WRAPPER
-# ==========================================================
+def finalize_wager_game(game_id, winning_device_token, surrendered_tokens=None):
 
-def finalize_wager(game_id, winning_device_token):
+    return _retry_on_db_lock(
+        _finalize_impl,
+        game_id,
+        winning_device_token,
+        surrendered_tokens,
+    )
+
+
+def finalize_wager(game_id, winning_device_token, surrendered_tokens=None):
     return finalize_wager_game(
         game_id=game_id,
         winning_device_token=winning_device_token,
+        surrendered_tokens=surrendered_tokens,
     )
 
 
 # ==========================================================
-# CANCEL WAGER
+# CANCEL
 # ==========================================================
 
-def cancel_wager(game_id):
+def _cancel_impl(game_id):
 
     with transaction.atomic():
 
@@ -504,31 +514,23 @@ def cancel_wager(game_id):
         if game.game_status in ("COMPLETED", "CANCELLED"):
             return {
                 "status": "error",
-                "message": (
-                    "Game has already been processed. "
-                    f"Current status: {game.game_status}"
-                ),
+                "message": f"Game already processed: {game.game_status}",
             }
 
-        participants = list(
-            game.players.select_for_update().all()
-        )
+        participants = list(game.players.select_for_update().all())
 
         for player in participants:
             if player.locked_coins < game.bet_amount:
                 return {
                     "status": "error",
                     "message": (
-                        f"Invalid locked balance for "
-                        f"player {player.device_token}."
+                        f"Invalid locked balance for {player.device_token}."
                     ),
                 }
 
         for player in participants:
-
             player.locked_coins -= game.bet_amount
             player.coins += game.bet_amount
-
             player.save(update_fields=["coins", "locked_coins"])
 
             SystemTransactionLog.objects.create(
@@ -548,7 +550,6 @@ def cancel_wager(game_id):
 
         game.game_status = "CANCELLED"
         game.total_pool_escrow = 0
-
         game.save(update_fields=["game_status", "total_pool_escrow"])
 
         return {
@@ -559,13 +560,12 @@ def cancel_wager(game_id):
         }
 
 
+def cancel_wager(game_id):
+    return _retry_on_db_lock(_cancel_impl, game_id)
+
+
 # ==========================================================
 # WITHDRAWAL APPROVAL
-#
-# Coins are ALREADY DEDUCTED at request time.
-# So this function only:
-#   1. Marks the withdrawal as APPROVED
-#   2. Pays referral commission (if any)
 # ==========================================================
 
 def process_withdrawal_approval(withdrawal_id):
@@ -575,64 +575,51 @@ def process_withdrawal_approval(withdrawal_id):
         withdrawal = (
             WithdrawalRequest.objects
             .select_for_update()
-            .filter(
-                id=withdrawal_id,
-                status="PENDING",
-            )
+            .filter(id=withdrawal_id, status="PENDING")
             .first()
         )
 
         if not withdrawal:
-
             return {
                 "status": "error",
-                "message": (
-                    "Pending withdrawal request "
-                    "was not found."
-                ),
+                "message": "Pending withdrawal not found.",
             }
 
-        profile = (
-            UserProfileBalance.objects
-            .select_for_update()
-            .filter(
-                device_token=withdrawal.device_token
+        profile = None
+        if withdrawal.user_profile_id:
+            profile = (
+                UserProfileBalance.objects
+                .select_for_update()
+                .filter(id=withdrawal.user_profile_id)
+                .first()
             )
-            .first()
-        )
-
         if not profile:
-
+            profile = (
+                UserProfileBalance.objects
+                .select_for_update()
+                .filter(device_token=withdrawal.device_token)
+                .first()
+            )
+        if not profile:
             return {
                 "status": "error",
-                "message": (
-                    "User wallet profile not found."
-                ),
+                "message": "User wallet profile not found.",
             }
-
-        # ==============================================
-        # NOTE: Coins are already deducted at request
-        # time. So we do NOT deduct again here.
-        # Just mark as approved.
-        # ==============================================
 
         withdrawal.status = "APPROVED"
         withdrawal.save(update_fields=["status"])
 
-        print(
-            f"✅ WITHDRAWAL APPROVED | "
-            f"device={withdrawal.device_token} | "
-            f"amount={withdrawal.amount}"
+        logger.info(
+            "WITHDRAWAL APPROVED | device=%s | amount_cents=%s | local=%s %s",
+            withdrawal.device_token,
+            withdrawal.amount,
+            withdrawal.local_amount,
+            withdrawal.currency,
         )
-
-        # ----------------------------------------------
-        # Referral commission
-        # ----------------------------------------------
 
         commission = 0
 
         try:
-
             config = SystemConfiguration.get_solo()
 
             referral_mapping = (
@@ -645,9 +632,7 @@ def process_withdrawal_approval(withdrawal_id):
             referrer = (
                 UserProfileBalance.objects
                 .select_for_update()
-                .get(
-                    id=referral_mapping.referrer.id
-                )
+                .get(id=referral_mapping.referrer.id)
             )
 
             commission = int(
@@ -658,17 +643,12 @@ def process_withdrawal_approval(withdrawal_id):
             )
 
             if commission > 0:
-
                 referrer.coins += commission
                 referrer.save(update_fields=["coins"])
 
-                referral_mapping.total_commission_earned += (
-                    commission
-                )
+                referral_mapping.total_commission_earned += commission
                 referral_mapping.save(
-                    update_fields=[
-                        "total_commission_earned",
-                    ]
+                    update_fields=["total_commission_earned"]
                 )
 
                 SystemTransactionLog.objects.create(
@@ -678,23 +658,18 @@ def process_withdrawal_approval(withdrawal_id):
                     reference_id=f"WD_REF_{withdrawal.id}",
                 )
 
-                print(
-                    f"🎁 REFERRAL COMMISSION | "
-                    f"referrer={referrer.device_token} | "
-                    f"amount={commission}"
-                )
-
         except ReferralSystem.DoesNotExist:
             pass
 
         return {
             "status": "success",
-            "message": (
-                "Withdrawal approved successfully."
-            ),
+            "message": f"Withdrawal approved ({format_dollar(withdrawal.amount)} → {withdrawal.local_amount} {withdrawal.currency}).",
             "withdrawal_id": withdrawal.id,
             "device_token": withdrawal.device_token,
             "amount": withdrawal.amount,
+            "amount_display": format_dollar(withdrawal.amount),
+            "local_amount": withdrawal.local_amount,
+            "currency": withdrawal.currency,
             "commission": commission,
             "remaining_balance": profile.coins,
         }
